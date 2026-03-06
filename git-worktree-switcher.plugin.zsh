@@ -6,13 +6,22 @@ wt() {
     return 1
   fi
 
-  local dir=$(git worktree list | fzf --height=40% | awk '{print $1}')
-  [[ -n "$dir" ]] && cd "$dir"
+  if [[ -n "$1" ]]; then
+    cd "$1"
+  else
+    local dir=$(git worktree list | fzf --height=40% | awk '{print $1}')
+    [[ -n "$dir" ]] && cd "$dir"
+  fi
 }
 
 _wt() {
-  local -a worktrees
-  worktrees=(${(f)"$(git worktree list 2>/dev/null | awk '{print $1}')"})
-  compadd -V worktrees -- "${worktrees[@]}"
+  _arguments '1:worktree:->worktrees' && return
+  case $state in
+    worktrees)
+      local -a wt_list
+      wt_list=(${(f)"$(git worktree list 2>/dev/null | awk '{print $1}')"})
+      _describe 'worktree' wt_list
+      ;;
+  esac
 }
 compdef _wt wt
