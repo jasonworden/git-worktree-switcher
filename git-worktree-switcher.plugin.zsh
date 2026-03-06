@@ -15,13 +15,8 @@ wt() {
 }
 
 _wt() {
-  _arguments '1:worktree:->worktrees' && return
-  case $state in
-    worktrees)
-      local -a wt_list
-      wt_list=(${(f)"$(git worktree list 2>/dev/null | awk '{print $1}')"})
-      _describe 'worktree' wt_list
-      ;;
-  esac
+  local -a wt_list
+  wt_list=(${(f)"$(git worktree list 2>/dev/null | awk '{print $1}')"})
+  compadd -f -V worktrees -- "${wt_list[@]}"
 }
 compdef _wt wt
