@@ -14,6 +14,7 @@ Type `wt` to get a fuzzy-searchable list of your worktrees. Select one to `cd` i
 
 ```zsh
 zinit light wicksipedia/git-worktree-switcher
+zinit cdreplay -q  # replay completions (needed for tab completion)
 ```
 
 ### Oh My Zsh
