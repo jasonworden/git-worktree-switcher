@@ -4,6 +4,8 @@ Quickly switch between git worktrees using fzf.
 
 Type `wt` to get a fuzzy-searchable list of your worktrees. Select one to `cd` into it.
 
+![demo](demo.png)
+
 ## Prerequisites
 
 - [fzf](https://github.com/junegunn/fzf)
