@@ -135,7 +135,7 @@ EOF
   local result=$(while IFS=$'\t' read -r branch rel abs; do
     printf "%s %-${max_width}s  %s %s\t%s\n" "$branch_icon" "$branch" "$folder" "$rel" "$abs"
   done <<< "$raw" | fzf --height=40% --delimiter='\t' --with-nth=1 \
-    --header="enter:switch │ ctrl-o:open │ ctrl-x:delete │ ctrl-a:add" \
+    --header="enter:switch │ ctrl-a:add │ ctrl-o:open │ ctrl-x:delete" \
     --expect=ctrl-o,ctrl-x,ctrl-a)
 
   [[ -n "$result" ]] || return
@@ -152,7 +152,18 @@ EOF
       printf "Branch name: "
       local branch_name
       read -r branch_name
-      [[ -n "$branch_name" ]] && _wt_add "$branch_name"
+      if [[ -n "$branch_name" ]]; then
+        _wt_add "$branch_name"
+        if [[ $? -eq 0 ]]; then
+          local target="$(dirname "$(_wt_main_worktree)")/$branch_name"
+          printf "Open in %s? [Y/n] " "$WT_OPENER"
+          local open_yn
+          read -r open_yn
+          if [[ "$open_yn" != [nN]* ]]; then
+            eval "$WT_OPENER \"$target\""
+          fi
+        fi
+      fi
       ;;
     ctrl-o) eval "$WT_OPENER \"$abs_path\"" ;;
     ctrl-x) _wt_delete "$abs_path" ;;

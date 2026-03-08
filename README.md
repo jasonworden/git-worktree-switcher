@@ -62,9 +62,9 @@ wt add <tab>    # tab-complete branch names
 | Key | Action |
 |-----|--------|
 | `enter` | Switch to selected worktree |
+| `ctrl-a` | Create a new worktree (prompts for branch name, offers to open in editor) |
 | `ctrl-o` | Open in editor (`$WT_OPENER`, default: `code`) |
 | `ctrl-x` | Delete selected worktree (with confirmation) |
-| `ctrl-a` | Create a new worktree (prompts for branch name) |
 
 ### Configuration
 
