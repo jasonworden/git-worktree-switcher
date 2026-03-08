@@ -50,6 +50,30 @@ source /path/to/git-worktree-switcher.plugin.zsh
 ## Usage
 
 ```
-wt          # opens fzf with all worktrees
-wt<tab>     # tab-completes worktree paths
+wt              # opens fzf picker
+wt <path>       # cd directly to a worktree
+wt add <name>   # create a new worktree (and branch if needed)
+wt<tab>         # tab-complete worktree paths and subcommands
+wt add <tab>    # tab-complete branch names
+```
+
+### fzf keybindings
+
+| Key | Action |
+|-----|--------|
+| `enter` | Switch to selected worktree |
+| `ctrl-o` | Open in editor (`$WT_OPENER`, default: `code`) |
+| `ctrl-x` | Delete selected worktree (with confirmation) |
+| `ctrl-a` | Create a new worktree (prompts for branch name) |
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WT_OPENER` | `code` | Editor command used by `ctrl-o` |
+
+### Local development
+
+```zsh
+source ~/path/to/git-worktree-switcher/git-worktree-switcher.plugin.zsh
 ```
