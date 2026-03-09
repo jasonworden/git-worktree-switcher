@@ -50,7 +50,15 @@ _wt_add() {
     git worktree add -b "$name" "$target"
   fi
 
-  [[ $? -eq 0 ]] && cd "$target"
+  [[ $? -eq 0 ]] || return 1
+  cd "$target"
+
+  printf "Open in %s? [Y/n] " "$WT_OPENER"
+  local open_yn
+  read -r open_yn
+  if [[ "$open_yn" != [nN]* ]]; then
+    eval "$WT_OPENER \"$target\""
+  fi
 }
 
 # Remove a worktree by absolute path, with a confirmation prompt.
@@ -154,18 +162,7 @@ EOF
       printf "Branch name: "
       local branch_name
       read -r branch_name
-      if [[ -n "$branch_name" ]]; then
-        _wt_add "$branch_name"
-        if [[ $? -eq 0 ]]; then
-          local target="$(dirname "$(_wt_main_worktree)")/$branch_name"
-          printf "Open in %s? [Y/n] " "$WT_OPENER"
-          local open_yn
-          read -r open_yn
-          if [[ "$open_yn" != [nN]* ]]; then
-            eval "$WT_OPENER \"$target\""
-          fi
-        fi
-      fi
+      [[ -n "$branch_name" ]] && _wt_add "$branch_name"
       ;;
     ctrl-o) eval "$WT_OPENER \"$abs_path\"" ;;
     ctrl-x) _wt_delete "$abs_path" ;;
