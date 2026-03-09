@@ -1,0 +1,29 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install zsh (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
+      - name: Install ShellSpec
+        run: |
+          git clone --depth 1 https://github.com/shellspec/shellspec.git /tmp/shellspec
+          sudo ln -s /tmp/shellspec/shellspec /usr/local/bin/shellspec
+
+      - name: Run tests
+        run: shellspec
