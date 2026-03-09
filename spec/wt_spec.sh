@@ -33,25 +33,31 @@ Describe "wt"
 
   Describe "wt . (regression test)"
     It "switches to main worktree absolute path"
+      Data "n"
       When call wt .
       The variable PWD should equal "$TEST_REPO"
       The status should be success
+      The stdout should include "Open in"
     End
 
     It "switches to main worktree from a different worktree"
       WT_PATH=$(add_test_worktree "$TEST_REPO" "other-branch")
       cd "$WT_PATH"
+      Data "n"
       When call wt .
       The variable PWD should equal "$TEST_REPO"
       The status should be success
+      The stdout should include "Open in"
     End
   End
 
   It "switches to an existing directory by absolute path"
     WT_PATH=$(add_test_worktree "$TEST_REPO" "my-feature")
+    Data "n"
     When call wt "$WT_PATH"
     The variable PWD should equal "$WT_PATH"
     The status should be success
+    The stdout should include "Open in"
   End
 
   It "fails for nonexistent path"
