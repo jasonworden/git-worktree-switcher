@@ -17,7 +17,7 @@ create_test_repo() {
   local tmpdir
   tmpdir=$(mktemp -d)
   tmpdir=$(resolve_path "$tmpdir")
-  git -C "$tmpdir" init --quiet
+  git -C "$tmpdir" init --quiet --initial-branch=main
   git -C "$tmpdir" config user.email "test@test.com"
   git -C "$tmpdir" config user.name "Test"
   git -C "$tmpdir" commit --allow-empty -m "initial" --quiet
