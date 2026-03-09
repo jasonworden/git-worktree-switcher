@@ -114,13 +114,21 @@ EOF
   # Direct path: `wt some/path` cds straight there
   if [[ -n "$1" ]]; then
     local main_wt=$(_wt_main_worktree)
+    local target
     if [[ "$1" == "." ]]; then
-      cd "$main_wt"
+      target="$main_wt"
     elif [[ -d "$1" ]]; then
-      cd "$1"
+      target="$1"
     else
-      # Try as a path relative to the main worktree
-      cd "$main_wt/$1"
+      target="$main_wt/$1"
+    fi
+    cd "$target" || return 1
+
+    printf "Open in %s? [Y/n] " "$WT_OPENER"
+    local open_yn
+    read -r open_yn
+    if [[ "$open_yn" != [nN]* ]]; then
+      eval "$WT_OPENER \"$target\""
     fi
     return
   fi
