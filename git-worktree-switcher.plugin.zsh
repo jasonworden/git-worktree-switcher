@@ -105,11 +105,13 @@ EOF
 
   # Direct path: `wt some/path` cds straight there
   if [[ -n "$1" ]]; then
-    if [[ -d "$1" ]]; then
+    local main_wt=$(_wt_main_worktree)
+    if [[ "$1" == "." ]]; then
+      cd "$main_wt"
+    elif [[ -d "$1" ]]; then
       cd "$1"
     else
       # Try as a path relative to the main worktree
-      local main_wt=$(_wt_main_worktree)
       cd "$main_wt/$1"
     fi
     return
