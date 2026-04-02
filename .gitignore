@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# direnv
+.envrc
+
+# VSCode / Cursor
+.vscode/
+.cursor/
+
+# Claude Code
+.claude/
+
+# Node (if applicable)
+node_modules/
+
+# Superpowers
+.superpowers/
