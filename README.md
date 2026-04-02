@@ -15,7 +15,7 @@ Type `wt` to get a fuzzy-searchable list of your worktrees. Select one to `cd` i
 ### zinit
 
 ```zsh
-zinit light wicksipedia/git-worktree-switcher
+zinit light jasonworden/git-worktree-switcher
 zinit cdreplay -q  # replay completions (needed for tab completion)
 ```
 
@@ -24,7 +24,7 @@ zinit cdreplay -q  # replay completions (needed for tab completion)
 Clone into your custom plugins directory:
 
 ```zsh
-git clone https://github.com/wicksipedia/git-worktree-switcher.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/git-worktree-switcher
+git clone https://github.com/jasonworden/git-worktree-switcher.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/git-worktree-switcher
 ```
 
 Then add to your plugins list in `.zshrc`:
@@ -36,7 +36,7 @@ plugins=(... git-worktree-switcher)
 ### Antigen
 
 ```zsh
-antigen bundle wicksipedia/git-worktree-switcher
+antigen bundle jasonworden/git-worktree-switcher
 ```
 
 ### Manual
