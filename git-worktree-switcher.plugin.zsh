@@ -1,6 +1,6 @@
 # git-worktree-switcher - quickly switch between git worktrees using fzf
 
-# Editor used by ctrl-o in the fzf picker (supports aliases)
+# Editor used by ctrl-o in the fzf picker (supports multi-word commands)
 : ${WT_OPENER:=code}
 
 # Parse `git worktree list --porcelain` into tab-delimited rows:
@@ -40,24 +40,23 @@ _wt_add() {
     return 1
   fi
   local name="$1"
-  local main_wt=$(_wt_main_worktree)
+  local main_wt="$(_wt_main_worktree)"
   local target="$(dirname "$main_wt")/$name"
 
   # Use existing branch if it exists, otherwise create a new one with -b
   if git show-ref --verify --quiet "refs/heads/$name" 2>/dev/null; then
-    git worktree add "$target" "$name"
+    git worktree add "$target" "$name" || return 1
   else
-    git worktree add -b "$name" "$target"
+    git worktree add -b "$name" "$target" || return 1
   fi
 
-  [[ $? -eq 0 ]] || return 1
   cd "$target"
 
   printf "Open in %s? [Y/n] " "$WT_OPENER"
   local open_yn
   read -r open_yn
   if [[ "$open_yn" != [nN]* ]]; then
-    eval "$WT_OPENER \"$target\""
+    ${(z)WT_OPENER} "$target"
   fi
 }
 
@@ -66,7 +65,7 @@ _wt_add() {
 # being deleted by moving them to the main worktree first.
 _wt_delete() {
   local wt_path="$1"
-  local name=$(basename "$wt_path")
+  local name="$(basename "$wt_path")"
 
   printf "Remove worktree '%s'? [y/N] " "$name"
   read -q || { echo; return 1; }
@@ -113,7 +112,7 @@ EOF
 
   # Direct path: `wt some/path` cds straight there
   if [[ -n "$1" ]]; then
-    local main_wt=$(_wt_main_worktree)
+    local main_wt="$(_wt_main_worktree)"
     local target
     if [[ "$1" == "." ]]; then
       target="$main_wt"
@@ -128,7 +127,7 @@ EOF
     local open_yn
     read -r open_yn
     if [[ "$open_yn" != [nN]* ]]; then
-      eval "$WT_OPENER \"$target\""
+      ${(z)WT_OPENER} "$target"
     fi
     return
   fi
@@ -172,7 +171,7 @@ EOF
       read -r branch_name
       [[ -n "$branch_name" ]] && _wt_add "$branch_name"
       ;;
-    ctrl-o) eval "$WT_OPENER \"$abs_path\"" ;;
+    ctrl-o) ${(z)WT_OPENER} "$abs_path" ;;
     ctrl-x) _wt_delete "$abs_path" ;;
     *)      cd "$abs_path" ;;
   esac
