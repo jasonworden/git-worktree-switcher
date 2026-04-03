@@ -140,3 +140,16 @@ enter:switch | ctrl-a:add | ctrl-o:open | ctrl-x:delete | ctrl-g:clean
 - **Required**: git, fzf (existing)
 - **Optional**: gh (GitHub CLI) — enables PR merge detection. Gracefully
   degrades without it, with a nudge to install/auth.
+
+## Distribution
+
+Stays as a zsh plugin (single file, sourced into shell). The `cd` requirement
+means a shell function is unavoidable regardless of distribution method.
+
+### Future consideration: Rust binary on Homebrew
+
+If the tool grows significantly (cross-shell support, more complex signal
+analysis, performance-sensitive operations), rewriting the core logic in Rust
+and distributing via Homebrew becomes worthwhile. The binary would handle
+signal gathering and output formatting; a thin shell init script (a la zoxide)
+would wrap it to provide `cd` and completion. Not needed at current scope.
