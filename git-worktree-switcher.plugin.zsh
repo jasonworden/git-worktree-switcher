@@ -31,6 +31,18 @@ _wt_main_worktree() {
   git worktree list --porcelain 2>/dev/null | awk '/^worktree / {print substr($0, 10); exit}'
 }
 
+# Returns the branch name of the main worktree (e.g., "main" or "master")
+_wt_default_branch() {
+  git worktree list --porcelain 2>/dev/null | awk '
+    /^branch / {
+      b = substr($0, 8)
+      sub("refs/heads/", "", b)
+      print b
+      exit
+    }
+  '
+}
+
 # Create a new worktree as a sibling directory of the main worktree.
 # If a local branch with the given name exists, it's checked out;
 # otherwise a new branch is created.
