@@ -141,6 +141,29 @@ _wt_check_worktree() {
   printf "%s\t%s\t%s\t%s\n" "$verdict" "$branch" "$wt_path" "$evidence_str"
 }
 
+# Quick local-only staleness check for a worktree.
+# Returns: "safe", "warn", or "" (unknown)
+_wt_quick_status() {
+  local branch="$1" wt_path="$2"
+
+  [[ "$branch" == "(detached)" ]] && return
+
+  local remote_gone=false
+  _wt_remote_branch_gone "$branch" && remote_gone=true
+
+  local ahead
+  ahead=$(_wt_unique_commits "$branch")
+
+  local dirty=false
+  _wt_has_changes "$wt_path" && dirty=true
+
+  if $remote_gone && [[ "$ahead" -eq 0 ]] && ! $dirty; then
+    echo "safe"
+  elif [[ "$ahead" -gt 0 ]] || $dirty; then
+    echo "warn"
+  fi
+}
+
 _wt_clean() {
   local keep_branches=false
   if [[ "$1" == "--keep-branches" ]] || [[ "${WT_CLEAN_KEEP_BRANCHES:-0}" == "1" ]]; then
@@ -366,11 +389,24 @@ EOF
   # Format entries as "icon branch  icon path\tabs_path" for fzf.
   # --with-nth=1 shows only the display portion (before \t).
   # --expect makes fzf output the pressed key on line 1, selection on line 2.
+  local safe_icon=$'\u2713'
+  local warn_icon=$'\u26a0'
+  local main_abs
+  main_abs=$(_wt_main_worktree)
+
   local result=$(while IFS=$'\t' read -r branch rel abs; do
-    printf "%s %-${max_width}s  %s %s\t%s\n" "$branch_icon" "$branch" "$folder" "$rel" "$abs"
+    local status_icon=""
+    if [[ "$branch" != "(detached)" && "$abs" != "$main_abs" ]]; then
+      local status
+      status=$(_wt_quick_status "$branch" "$abs")
+      [[ "$status" == "safe" ]] && status_icon=" $safe_icon"
+      [[ "$status" == "warn" ]] && status_icon=" $warn_icon"
+    fi
+    printf "%s %-${max_width}s%s  %s %s\t%s\n" \
+      "$branch_icon" "$branch" "$status_icon" "$folder" "$rel" "$abs"
   done <<< "$raw" | fzf --height=40% --delimiter='\t' --with-nth=1 \
-    --header="enter:switch │ ctrl-a:add │ ctrl-o:open │ ctrl-x:delete" \
-    --expect=ctrl-o,ctrl-x,ctrl-a)
+    --header="enter:switch │ ctrl-a:add │ ctrl-o:open │ ctrl-x:delete │ ctrl-g:clean" \
+    --expect=ctrl-o,ctrl-x,ctrl-a,ctrl-g)
 
   [[ -n "$result" ]] || return
 
@@ -390,6 +426,7 @@ EOF
       ;;
     ctrl-o) ${(z)WT_OPENER} "$abs_path" ;;
     ctrl-x) _wt_delete "$abs_path" ;;
+    ctrl-g) _wt_clean ;;
     *)      cd "$abs_path" ;;
   esac
 }
