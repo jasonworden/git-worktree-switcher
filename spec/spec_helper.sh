@@ -20,6 +20,7 @@ create_test_repo() {
   git -C "$tmpdir" init --quiet --initial-branch=main
   git -C "$tmpdir" config user.email "test@test.com"
   git -C "$tmpdir" config user.name "Test"
+  git -C "$tmpdir" config core.hooksPath /dev/null
   git -C "$tmpdir" commit --allow-empty -m "initial" --quiet
   echo "$tmpdir"
 }
