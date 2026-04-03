@@ -63,6 +63,31 @@ _wt_remote_branch_gone() {
   ! git show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null
 }
 
+# Returns 0 if gh CLI is installed and authed for current repo, 1 otherwise.
+# Prints a tip to stderr if gh is missing or unauthed.
+_wt_gh_available() {
+  if ! command -v gh &>/dev/null; then
+    echo "tip: brew install gh for PR merge detection" >&2
+    return 1
+  fi
+  if ! gh auth status &>/dev/null; then
+    echo "tip: run 'gh auth login' to enable PR status checks" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Returns 0 if a merged PR exists for the given branch, 1 otherwise.
+# Outputs the PR number if found (e.g., "42").
+_wt_pr_merged() {
+  local branch="$1"
+  _wt_gh_available 2>/dev/null || return 1
+  local pr_number
+  pr_number=$(gh pr list --head "$branch" --state merged --json number --jq '.[0].number' 2>/dev/null)
+  [[ -n "$pr_number" ]] && echo "$pr_number" && return 0
+  return 1
+}
+
 # Create a new worktree as a sibling directory of the main worktree.
 # If a local branch with the given name exists, it's checked out;
 # otherwise a new branch is created.

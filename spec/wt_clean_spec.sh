@@ -99,3 +99,44 @@ Describe "_wt_remote_branch_gone"
     The status should be failure
   End
 End
+
+Describe "_wt_gh_available"
+  Include "$SHELLSPEC_PROJECT_ROOT/spec/spec_helper.sh"
+
+  setup() {
+    TEST_REPO=$(create_test_repo)
+    cd "$TEST_REPO"
+    source "$PLUGIN_PATH"
+  }
+
+  cleanup() { cleanup_test_repo "$TEST_REPO"; }
+  BeforeEach "setup"
+  AfterEach "cleanup"
+
+  It "returns 1 when gh is not installed"
+    PATH="/usr/bin:/bin"
+    When call _wt_gh_available
+    The status should be failure
+    The stderr should include "tip:"
+  End
+End
+
+Describe "_wt_pr_merged"
+  Include "$SHELLSPEC_PROJECT_ROOT/spec/spec_helper.sh"
+
+  setup() {
+    TEST_REPO=$(create_test_repo)
+    cd "$TEST_REPO"
+    source "$PLUGIN_PATH"
+  }
+
+  cleanup() { cleanup_test_repo "$TEST_REPO"; }
+  BeforeEach "setup"
+  AfterEach "cleanup"
+
+  It "returns 1 when gh is not available"
+    PATH="/usr/bin:/bin"
+    When call _wt_pr_merged "any-branch"
+    The status should be failure
+  End
+End
