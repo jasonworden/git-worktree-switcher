@@ -200,11 +200,10 @@ _wt_clean() {
   local safe_icon=$'\u2713'   # checkmark
   local warn_icon=$'\u26a0'   # warning
   local fzf_lines=()
+  local verdict branch wt_path evidence icon
 
   for v in "${verdicts[@]}"; do
-    local verdict branch wt_path evidence
     IFS=$'\t' read -r verdict branch wt_path evidence <<< "$v"
-    local icon
     if [[ "$verdict" == "safe" ]]; then
       icon="$safe_icon"
     else
@@ -223,8 +222,8 @@ _wt_clean() {
 
   # Extract paths and branch names from selection
   local -a paths branches
+  local abs_path branch_name
   while IFS= read -r line; do
-    local abs_path branch_name
     abs_path=$(echo "$line" | awk -F'\t' '{print $2}')
     branch_name=$(echo "$line" | awk '{print $2}')
     paths+=("$abs_path")
@@ -395,10 +394,10 @@ EOF
   local main_abs
   main_abs=$(_wt_main_worktree)
 
+  local status_icon status
   local result=$(while IFS=$'\t' read -r branch rel abs; do
-    local status_icon=""
+    status_icon=""
     if [[ "$branch" != "(detached)" && "$abs" != "$main_abs" ]]; then
-      local status
       status=$(_wt_quick_status "$branch" "$abs")
       [[ "$status" == "safe" ]] && status_icon=" $safe_icon"
       [[ "$status" == "warn" ]] && status_icon=" $warn_icon"
