@@ -57,6 +57,12 @@ _wt_unique_commits() {
   git log --oneline "$default_branch..$branch" 2>/dev/null | wc -l | tr -d ' '
 }
 
+# Returns 0 if the remote tracking branch is gone, 1 if it still exists
+_wt_remote_branch_gone() {
+  local branch="$1"
+  ! git show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null
+}
+
 # Create a new worktree as a sibling directory of the main worktree.
 # If a local branch with the given name exists, it's checked out;
 # otherwise a new branch is created.

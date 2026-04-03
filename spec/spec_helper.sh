@@ -32,6 +32,18 @@ add_test_worktree() {
   echo "$target"
 }
 
+# Creates a bare remote and configures the test repo to track it
+create_test_remote() {
+  local main_wt="$1"
+  local remote_dir
+  remote_dir=$(mktemp -d)
+  remote_dir=$(resolve_path "$remote_dir")
+  git -C "$remote_dir" init --bare --quiet --initial-branch=main
+  git -C "$main_wt" remote add origin "$remote_dir"
+  git -C "$main_wt" push --quiet origin main 2>/dev/null
+  echo "$remote_dir"
+}
+
 cleanup_test_repo() {
   local main_wt="$1"
   # Remove all worktrees first
