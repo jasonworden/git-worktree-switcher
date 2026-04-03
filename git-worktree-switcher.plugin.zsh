@@ -43,6 +43,20 @@ _wt_default_branch() {
   '
 }
 
+# Returns 0 if worktree has uncommitted/untracked changes, 1 if clean
+_wt_has_changes() {
+  local wt_path="$1"
+  [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]
+}
+
+# Returns the number of commits on <branch> not on the default branch
+_wt_unique_commits() {
+  local branch="$1"
+  local default_branch
+  default_branch=$(_wt_default_branch)
+  git log --oneline "$default_branch..$branch" 2>/dev/null | wc -l | tr -d ' '
+}
+
 # Create a new worktree as a sibling directory of the main worktree.
 # If a local branch with the given name exists, it's checked out;
 # otherwise a new branch is created.
