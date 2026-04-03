@@ -45,6 +45,30 @@ Describe "_wt_entries"
     The output should include "(detached)"
   End
 
+  It "handles worktrees nested inside main worktree (.worktrees/)"
+    add_nested_test_worktree "$TEST_REPO" "nested-feat" >/dev/null
+    When call _wt_entries
+    The output should include "nested-feat"
+    The output should include ".worktrees/nested-feat"
+    The lines of output should equal 2
+  End
+
+  It "handles many worktrees (sibling + nested)"
+    add_test_worktree "$TEST_REPO" "feat-a" >/dev/null
+    add_test_worktree "$TEST_REPO" "feat-b" >/dev/null
+    add_nested_test_worktree "$TEST_REPO" "nested-c" >/dev/null
+    add_nested_test_worktree "$TEST_REPO" "nested-d" >/dev/null
+    When call _wt_entries
+    The lines of output should equal 5
+  End
+
+  It "handles branch names with slashes"
+    local target="$(dirname "$TEST_REPO")/fix-slash"
+    git -C "$TEST_REPO" worktree add -b "fix/my-bug" "$target" --quiet 2>/dev/null
+    When call _wt_entries
+    The output should include "fix/my-bug"
+  End
+
   It "returns empty output when not in a git repo"
     cd /tmp
     When call _wt_entries

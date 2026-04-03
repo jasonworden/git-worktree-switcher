@@ -65,4 +65,23 @@ Describe "wt"
     The status should be failure
     The stderr should be present
   End
+
+  Describe "wt clean alias"
+    It "'wt c' dispatches to clean (shows no-worktrees message)"
+      When call wt c
+      The output should include "No worktrees to clean"
+    End
+  End
+
+  Describe "wt list aliases"
+    It "'wt --help' documents list aliases"
+      When call wt --help
+      The output should include "list, ls, l"
+    End
+
+    It "'wt --help' documents clean alias"
+      When call wt --help
+      The output should include "alias: c"
+    End
+  End
 End
