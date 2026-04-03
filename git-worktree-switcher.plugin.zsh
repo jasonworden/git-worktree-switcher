@@ -198,14 +198,19 @@ _wt_quick_status() {
 }
 
 _wt_clean() {
-  local keep_branches=false
-  if [[ "$1" == "--keep-branches" ]] || [[ "${WT_CLEAN_KEEP_BRANCHES:-0}" == "1" ]]; then
-    keep_branches=true
-  fi
+  local keep_branches=false no_gh=false
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --keep-branches) keep_branches=true ;;
+      --no-gh)         no_gh=true ;;
+    esac
+  done
+  [[ "${WT_CLEAN_KEEP_BRANCHES:-0}" == "1" ]] && keep_branches=true
 
   # Pre-flight: check gh availability (prints tips to stderr)
   local gh_mode="no-gh"
-  if _wt_gh_available; then
+  if ! $no_gh && _wt_gh_available; then
     gh_mode="gh"
   fi
 
@@ -410,6 +415,8 @@ Commands:
   wt <path>           Switch to worktree at path
   wt add <branch>     Create new worktree (and branch if needed)
   wt clean            Review and batch-delete stale worktrees (alias: c)
+    --no-gh            Skip gh CLI checks (merged PR detection)
+    --keep-branches    Keep local branches after removing worktrees
 
 fzf keybindings:
   enter    Switch to selected worktree
