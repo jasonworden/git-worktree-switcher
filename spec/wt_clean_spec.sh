@@ -69,3 +69,33 @@ Describe "_wt_unique_commits"
     The output should equal "2"
   End
 End
+
+Describe "_wt_remote_branch_gone"
+  Include "$SHELLSPEC_PROJECT_ROOT/spec/spec_helper.sh"
+
+  setup() {
+    TEST_REPO=$(create_test_repo)
+    cd "$TEST_REPO"
+    source "$PLUGIN_PATH"
+    REMOTE_DIR=$(create_test_remote "$TEST_REPO")
+  }
+
+  cleanup() {
+    rm -rf "$REMOTE_DIR"
+    cleanup_test_repo "$TEST_REPO"
+  }
+  BeforeEach "setup"
+  AfterEach "cleanup"
+
+  It "returns 0 (true) when remote branch does not exist"
+    When call _wt_remote_branch_gone "nonexistent-branch"
+    The status should be success
+  End
+
+  It "returns 1 (false) when remote branch exists"
+    git -C "$TEST_REPO" push --quiet origin main:feature-branch 2>/dev/null
+    git -C "$TEST_REPO" fetch --quiet 2>/dev/null
+    When call _wt_remote_branch_gone "feature-branch"
+    The status should be failure
+  End
+End
