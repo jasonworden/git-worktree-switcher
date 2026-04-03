@@ -194,10 +194,12 @@ _wt_clean() {
   fi
 
   # Format for fzf: icon + branch + evidence, with abs_path after tab
-  local safe_icon=$'\u2713'   # checkmark
-  local warn_icon=$'\u26a0'   # warning
+  # ANSI color codes
+  local c_green=$'\033[32m' c_yellow=$'\033[33m' c_red=$'\033[31m'
+  local c_dim=$'\033[2m' c_bold=$'\033[1m' c_reset=$'\033[0m'
+
   local fzf_lines=()
-  local verdict branch wt_path evidence icon
+  local verdict branch wt_path evidence icon colored_evidence
 
   # Compute max branch width for column alignment
   local max_branch_width=0
@@ -208,17 +210,45 @@ _wt_clean() {
 
   for v in "${verdicts[@]}"; do
     IFS=$'\t' read -r verdict branch wt_path evidence <<< "$v"
+
+    # Colorize icon
     if [[ "$verdict" == "safe" ]]; then
-      icon="$safe_icon"
+      icon="${c_green}\u2713${c_reset}"
     else
-      icon="$warn_icon"
+      icon="${c_yellow}\u26a0${c_reset}"
     fi
-    fzf_lines+=("$(printf "%s %-${max_branch_width}s  %s\t%s" "$icon" "$branch" "$evidence" "$wt_path")")
+
+    # Colorize individual evidence pieces
+    colored_evidence=""
+    local IFS_BAK="$IFS"
+    IFS=' · '
+    local -a pieces=( ${=evidence} )
+    IFS="$IFS_BAK"
+    # Re-split properly on the dot separator
+    pieces=("${(@s: · :)evidence}")
+    local p colored_p
+    for p in "${pieces[@]}"; do
+      case "$p" in
+        PR\ *merged)       colored_p="${c_green}${p}${c_reset}" ;;
+        remote\ gone)      colored_p="${c_green}${p}${c_reset}" ;;
+        clean)             colored_p="${c_dim}${p}${c_reset}" ;;
+        *commit*ahead*)    colored_p="${c_yellow}${p}${c_reset}" ;;
+        uncommitted*)      colored_p="${c_red}${p}${c_reset}" ;;
+        *)                 colored_p="$p" ;;
+      esac
+      if [[ -n "$colored_evidence" ]]; then
+        colored_evidence="${colored_evidence} ${c_dim}\u00b7${c_reset} ${colored_p}"
+      else
+        colored_evidence="$colored_p"
+      fi
+    done
+
+    fzf_lines+=("$(printf "%s ${c_bold}%-${max_branch_width}s${c_reset}  %s\t%s" "$icon" "$branch" "$colored_evidence" "$wt_path")")
   done
 
   # fzf multi-select
   local selected
-  selected=$(printf '%s\n' "${fzf_lines[@]}" | fzf --multi --height=40% \
+  selected=$(printf '%s\n' "${fzf_lines[@]}" | fzf --multi --ansi --height=40% \
     --delimiter='\t' --with-nth=1 \
     --header="tab:select | enter:delete selected | esc:cancel")
 
