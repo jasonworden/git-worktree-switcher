@@ -141,9 +141,8 @@ _wt_add() {
   fi
 
   local target
-  target=$(wt-core add "$1" 2>&1)
+  target=$(wt-core add "$1")
   if [[ $? -ne 0 ]]; then
-    echo "$target" >&2
     return 1
   fi
 

@@ -1,10 +1,9 @@
-Describe "_wt_entries"
+Describe "wt-core entries"
   Include "$SHELLSPEC_PROJECT_ROOT/spec/spec_helper.sh"
 
   setup() {
     TEST_REPO=$(create_test_repo)
     cd "$TEST_REPO"
-    source "$PLUGIN_PATH"
   }
 
   cleanup() {
@@ -15,14 +14,14 @@ Describe "_wt_entries"
   AfterEach "cleanup"
 
   It "shows main worktree with relative path '.'"
-    When call _wt_entries
+    When call wt-core entries
     The output should include "	.	"
     The status should be success
   End
 
   It "includes additional worktree branch name in output"
     add_test_worktree "$TEST_REPO" "feature-x" >/dev/null
-    When call _wt_entries
+    When call wt-core entries
     The output should include "feature-x"
     The status should be success
   End
@@ -30,24 +29,24 @@ Describe "_wt_entries"
   It "produces correct line count for multiple worktrees"
     add_test_worktree "$TEST_REPO" "feat-a" >/dev/null
     add_test_worktree "$TEST_REPO" "feat-b" >/dev/null
-    When call _wt_entries
+    When call wt-core entries
     The lines of output should equal 3
   End
 
   It "extracts branch name without refs/heads/ prefix"
-    When call _wt_entries
+    When call wt-core entries
     The first line of output should start with "main	"
   End
 
   It "shows (detached) for detached HEAD"
     git -C "$TEST_REPO" checkout --detach --quiet
-    When call _wt_entries
+    When call wt-core entries
     The output should include "(detached)"
   End
 
   It "returns empty output when not in a git repo"
     cd /tmp
-    When call _wt_entries
+    When call wt-core entries
     The output should equal ""
   End
 End

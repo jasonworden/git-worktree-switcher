@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::git;
 
@@ -20,6 +20,8 @@ pub fn run(branch: &str) -> Result<(), String> {
     let status = if exists {
         Command::new("git")
             .args(["worktree", "add", &target.to_string_lossy(), branch])
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
             .status()
     } else {
         Command::new("git")
@@ -30,6 +32,8 @@ pub fn run(branch: &str) -> Result<(), String> {
                 branch,
                 &target.to_string_lossy(),
             ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
             .status()
     };
 
