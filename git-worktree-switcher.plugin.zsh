@@ -49,11 +49,11 @@ _wt_has_changes() {
   [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]
 }
 
-# Returns the number of commits on <branch> not on the default branch
+# Returns the number of commits on <branch> not on the default branch.
+# Accepts optional second arg to avoid redundant _wt_default_branch calls.
 _wt_unique_commits() {
   local branch="$1"
-  local default_branch
-  default_branch=$(_wt_default_branch)
+  local default_branch="${2:-$(_wt_default_branch)}"
   git log --oneline "$default_branch..$branch" 2>/dev/null | wc -l | tr -d ' '
 }
 
@@ -70,7 +70,7 @@ _wt_gh_available() {
     echo "tip: brew install gh for PR merge detection" >&2
     return 1
   fi
-  if ! gh auth status &>/dev/null; then
+  if ! gh auth token &>/dev/null; then
     echo "tip: run 'gh auth login' to enable PR status checks" >&2
     return 1
   fi
@@ -89,51 +89,46 @@ _wt_pr_merged() {
 }
 
 # Checks a single worktree and outputs a tab-delimited verdict line.
-# Args: branch_name abs_path gh_mode("gh" or "no-gh")
+# Args: branch_name abs_path gh_mode("gh" or "no-gh") [default_branch]
 # Output: verdict\tbranch\tpath\tevidence
 _wt_check_worktree() {
-  local branch="$1" wt_path="$2" gh_mode="$3"
+  local branch="$1" wt_path="$2" gh_mode="$3" default_branch="${4:-$(_wt_default_branch)}"
   local evidence=()
-  local dominated=true  # assume safe until proven otherwise
+  local has_gone_signal=false
+  local has_concerns=false
 
   # Signal: PR merged (only in gh mode)
-  if [[ "$gh_mode" == "gh" ]]; then
-    local pr_num
-    if pr_num=$(_wt_pr_merged "$branch"); then
-      evidence+=("PR #${pr_num} merged")
-    fi
+  local pr_num
+  if [[ "$gh_mode" == "gh" ]] && pr_num=$(_wt_pr_merged "$branch"); then
+    evidence+=("PR #${pr_num} merged")
+    has_gone_signal=true
   fi
 
   # Signal: remote branch gone
   if _wt_remote_branch_gone "$branch"; then
     evidence+=("remote gone")
-  else
-    dominated=false
+    has_gone_signal=true
   fi
 
   # Signal: unique commits
   local ahead
-  ahead=$(_wt_unique_commits "$branch")
+  ahead=$(_wt_unique_commits "$branch" "$default_branch")
   if [[ "$ahead" -gt 0 ]]; then
     evidence+=("${ahead} commit(s) ahead")
-    dominated=false
+    has_concerns=true
   fi
 
   # Signal: uncommitted changes
   if _wt_has_changes "$wt_path"; then
     evidence+=("uncommitted changes")
-    dominated=false
+    has_concerns=true
   else
     evidence+=("clean")
   fi
 
   # Verdict: safe only if no concerns AND (remote gone or PR merged)
   local verdict="warn"
-  local has_gone_signal=false
-  for e in "${evidence[@]}"; do
-    [[ "$e" == *"merged"* || "$e" == "remote gone" ]] && has_gone_signal=true
-  done
-  if $dominated && $has_gone_signal; then
+  if ! $has_concerns && $has_gone_signal; then
     verdict="safe"
   fi
 
@@ -144,7 +139,7 @@ _wt_check_worktree() {
 # Quick local-only staleness check for a worktree.
 # Returns: "safe", "warn", or "" (unknown)
 _wt_quick_status() {
-  local branch="$1" wt_path="$2"
+  local branch="$1" wt_path="$2" default_branch="${3:-$(_wt_default_branch)}"
 
   [[ "$branch" == "(detached)" ]] && return
 
@@ -152,7 +147,7 @@ _wt_quick_status() {
   _wt_remote_branch_gone "$branch" && remote_gone=true
 
   local ahead
-  ahead=$(_wt_unique_commits "$branch")
+  ahead=$(_wt_unique_commits "$branch" "$default_branch")
 
   local dirty=false
   _wt_has_changes "$wt_path" && dirty=true
@@ -181,14 +176,16 @@ _wt_clean() {
   git fetch --prune --quiet 2>/dev/null
 
   # Gather verdicts for all non-main worktrees
-  local main_wt
+  local main_wt default_branch
   main_wt=$(_wt_main_worktree)
+  default_branch=$(_wt_default_branch)
   local verdicts=()
   local raw=$(_wt_entries)
 
   while IFS=$'\t' read -r branch rel abs; do
     [[ "$abs" == "$main_wt" ]] && continue
-    verdicts+=("$(_wt_check_worktree "$branch" "$abs" "$gh_mode")")
+    [[ "$branch" == "(detached)" ]] && continue
+    verdicts+=("$(_wt_check_worktree "$branch" "$abs" "$gh_mode" "$default_branch")")
   done <<< "$raw"
 
   if [[ ${#verdicts[@]} -eq 0 ]]; then
@@ -202,6 +199,13 @@ _wt_clean() {
   local fzf_lines=()
   local verdict branch wt_path evidence icon
 
+  # Compute max branch width for column alignment
+  local max_branch_width=0
+  for v in "${verdicts[@]}"; do
+    IFS=$'\t' read -r verdict branch _ _ <<< "$v"
+    (( ${#branch} > max_branch_width )) && max_branch_width=${#branch}
+  done
+
   for v in "${verdicts[@]}"; do
     IFS=$'\t' read -r verdict branch wt_path evidence <<< "$v"
     if [[ "$verdict" == "safe" ]]; then
@@ -209,7 +213,7 @@ _wt_clean() {
     else
       icon="$warn_icon"
     fi
-    fzf_lines+=("$(printf "%s %-30s  %s\t%s" "$icon" "$branch" "$evidence" "$wt_path")")
+    fzf_lines+=("$(printf "%s %-${max_branch_width}s  %s\t%s" "$icon" "$branch" "$evidence" "$wt_path")")
   done
 
   # fzf multi-select
@@ -245,9 +249,10 @@ _wt_clean() {
   echo
 
   # Batch delete
+  local wt_path branch
   for i in {1..${#paths[@]}}; do
-    local wt_path="${paths[$i]}"
-    local branch="${branches[$i]}"
+    wt_path="${paths[$i]}"
+    branch="${branches[$i]}"
 
     if [[ "$PWD" == "$wt_path"* ]]; then
       cd "$main_wt"
@@ -391,14 +396,15 @@ EOF
   # --expect makes fzf output the pressed key on line 1, selection on line 2.
   local safe_icon=$'\u2713'
   local warn_icon=$'\u26a0'
-  local main_abs
+  local main_abs default_branch
   main_abs=$(_wt_main_worktree)
+  default_branch=$(_wt_default_branch)
 
   local status_icon status
   local result=$(while IFS=$'\t' read -r branch rel abs; do
     status_icon=""
     if [[ "$branch" != "(detached)" && "$abs" != "$main_abs" ]]; then
-      status=$(_wt_quick_status "$branch" "$abs")
+      status=$(_wt_quick_status "$branch" "$abs" "$default_branch")
       [[ "$status" == "safe" ]] && status_icon=" $safe_icon"
       [[ "$status" == "warn" ]] && status_icon=" $warn_icon"
     fi
