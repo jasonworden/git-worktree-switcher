@@ -217,11 +217,11 @@ _wt_clean() {
   local verdicts=()
   local raw=$(_wt_entries)
 
-  while IFS=$'\t' read -r branch rel abs; do
+  while IFS=$'\t' read -r branch rel abs <&3; do
     [[ "$abs" == "$main_wt" ]] && continue
     [[ "$branch" == "(detached)" ]] && continue
     verdicts+=("$(_wt_check_worktree "$branch" "$abs" "$gh_mode" "$default_branch")")
-  done <<< "$raw"
+  done 3<<< "$raw"
 
   if [[ ${#verdicts[@]} -eq 0 ]]; then
     echo "No worktrees to clean (only main worktree exists)."
@@ -460,7 +460,7 @@ EOF
   default_branch=$(_wt_default_branch)
 
   local status_icon status
-  local result=$(while IFS=$'\t' read -r branch rel abs; do
+  local result=$(while IFS=$'\t' read -r branch rel abs <&3; do
     status_icon=""
     if [[ "$branch" != "(detached)" && "$abs" != "$main_abs" ]]; then
       status=$(_wt_quick_status "$branch" "$abs" "$default_branch")
@@ -469,7 +469,7 @@ EOF
     fi
     printf "%s %-${max_width}s%s  %s %s\t%s\n" \
       "$branch_icon" "$branch" "$status_icon" "$folder" "$rel" "$abs"
-  done <<< "$raw" | fzf --height=40% --delimiter='\t' --with-nth=1 \
+  done 3<<< "$raw" | fzf --height=40% --delimiter='\t' --with-nth=1 \
     --header="enter:switch │ ctrl-a:add │ ctrl-o:open │ ctrl-x:delete │ ctrl-g:clean" \
     --expect=ctrl-o,ctrl-x,ctrl-a,ctrl-g)
 
