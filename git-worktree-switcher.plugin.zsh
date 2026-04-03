@@ -88,6 +88,37 @@ _wt_pr_merged() {
   return 1
 }
 
+# Fetches all merged PRs for the current repo in a single GraphQL call.
+# Populates the associative array _wt_merged_prs: branch_name -> PR number.
+# Returns 1 if gh is unavailable.
+_wt_fetch_merged_prs() {
+  typeset -gA _wt_merged_prs
+  _wt_merged_prs=()
+  _wt_gh_available 2>/dev/null || return 1
+
+  local owner repo remote_url
+  remote_url=$(git remote get-url origin 2>/dev/null) || return 1
+  # Extract owner/repo from git@host:owner/repo.git or https://host/owner/repo.git
+  if [[ "$remote_url" == git@* ]]; then
+    local path_part="${remote_url#*:}"
+    owner="${path_part%%/*}"
+    repo="${${path_part#*/}%.git}"
+  else
+    local path_part="${remote_url#https://*/}"
+    owner="${path_part%%/*}"
+    repo="${${path_part#*/}%.git}"
+  fi
+  [[ -z "$owner" || -z "$repo" ]] && return 1
+
+  local branch_name pr_number
+  while IFS=$'\t' read -r branch_name pr_number; do
+    [[ -n "$branch_name" ]] && _wt_merged_prs[$branch_name]="$pr_number"
+  done < <(gh api graphql \
+    -f query='query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){pullRequests(first:100,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{headRefName number}}}}' \
+    -f owner="$owner" -f repo="$repo" \
+    --jq '.data.repository.pullRequests.nodes[] | [.headRefName, (.number | tostring)] | @tsv' 2>/dev/null)
+}
+
 # Checks a single worktree and outputs a tab-delimited verdict line.
 # Args: branch_name abs_path gh_mode("gh" or "no-gh") [default_branch]
 # Output: verdict\tbranch\tpath\tevidence
@@ -97,10 +128,9 @@ _wt_check_worktree() {
   local has_gone_signal=false
   local has_concerns=false
 
-  # Signal: PR merged (only in gh mode)
-  local pr_num
-  if [[ "$gh_mode" == "gh" ]] && pr_num=$(_wt_pr_merged "$branch"); then
-    evidence+=("PR #${pr_num} merged")
+  # Signal: PR merged (lookup from pre-fetched associative array)
+  if [[ "$gh_mode" == "gh" ]] && [[ -n "${_wt_merged_prs[$branch]:-}" ]]; then
+    evidence+=("PR #${_wt_merged_prs[$branch]} merged")
     has_gone_signal=true
   fi
 
@@ -171,9 +201,14 @@ _wt_clean() {
     gh_mode="gh"
   fi
 
-  # Freshen remote state
+  # Freshen remote state (background) while we fetch merged PRs (foreground)
   echo "Fetching latest remote state..."
-  git fetch --prune --quiet 2>/dev/null
+  git fetch --prune --quiet 2>/dev/null &
+  local fetch_pid=$!
+  if [[ "$gh_mode" == "gh" ]]; then
+    _wt_fetch_merged_prs
+  fi
+  wait $fetch_pid
 
   # Gather verdicts for all non-main worktrees
   local main_wt default_branch
