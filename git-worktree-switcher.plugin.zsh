@@ -141,6 +141,107 @@ _wt_check_worktree() {
   printf "%s\t%s\t%s\t%s\n" "$verdict" "$branch" "$wt_path" "$evidence_str"
 }
 
+_wt_clean() {
+  local keep_branches=false
+  if [[ "$1" == "--keep-branches" ]] || [[ "${WT_CLEAN_KEEP_BRANCHES:-0}" == "1" ]]; then
+    keep_branches=true
+  fi
+
+  # Pre-flight: check gh availability (prints tips to stderr)
+  local gh_mode="no-gh"
+  if _wt_gh_available; then
+    gh_mode="gh"
+  fi
+
+  # Freshen remote state
+  echo "Fetching latest remote state..."
+  git fetch --prune --quiet 2>/dev/null
+
+  # Gather verdicts for all non-main worktrees
+  local main_wt
+  main_wt=$(_wt_main_worktree)
+  local verdicts=()
+  local raw=$(_wt_entries)
+
+  while IFS=$'\t' read -r branch rel abs; do
+    [[ "$abs" == "$main_wt" ]] && continue
+    verdicts+=("$(_wt_check_worktree "$branch" "$abs" "$gh_mode")")
+  done <<< "$raw"
+
+  if [[ ${#verdicts[@]} -eq 0 ]]; then
+    echo "No worktrees to clean (only main worktree exists)."
+    return
+  fi
+
+  # Format for fzf: icon + branch + evidence, with abs_path after tab
+  local safe_icon=$'\u2713'   # checkmark
+  local warn_icon=$'\u26a0'   # warning
+  local fzf_lines=()
+
+  for v in "${verdicts[@]}"; do
+    local verdict branch wt_path evidence
+    IFS=$'\t' read -r verdict branch wt_path evidence <<< "$v"
+    local icon
+    if [[ "$verdict" == "safe" ]]; then
+      icon="$safe_icon"
+    else
+      icon="$warn_icon"
+    fi
+    fzf_lines+=("$(printf "%s %-30s  %s\t%s" "$icon" "$branch" "$evidence" "$wt_path")")
+  done
+
+  # fzf multi-select
+  local selected
+  selected=$(printf '%s\n' "${fzf_lines[@]}" | fzf --multi --height=40% \
+    --delimiter='\t' --with-nth=1 \
+    --header="tab:select | enter:delete selected | esc:cancel")
+
+  [[ -n "$selected" ]] || return
+
+  # Extract paths and branch names from selection
+  local -a paths branches
+  while IFS= read -r line; do
+    local abs_path branch_name
+    abs_path=$(echo "$line" | awk -F'\t' '{print $2}')
+    branch_name=$(echo "$line" | awk '{print $2}')
+    paths+=("$abs_path")
+    branches+=("$branch_name")
+  done <<< "$selected"
+
+  # Confirmation
+  local branch_msg=""
+  if ! $keep_branches; then
+    branch_msg=" (and local branches)"
+  fi
+  echo "Will delete ${#paths[@]} worktree(s)${branch_msg}:"
+  for b in "${branches[@]}"; do
+    echo "  - $b"
+  done
+  echo
+  printf "Proceed? [y/N] "
+  read -q || { echo; return 1; }
+  echo
+
+  # Batch delete
+  for i in {1..${#paths[@]}}; do
+    local wt_path="${paths[$i]}"
+    local branch="${branches[$i]}"
+
+    if [[ "$PWD" == "$wt_path"* ]]; then
+      cd "$main_wt"
+    fi
+
+    if git worktree remove "$wt_path" 2>/dev/null; then
+      echo "Removed worktree: $branch"
+      if ! $keep_branches; then
+        git branch -D "$branch" 2>/dev/null && echo "Deleted branch: $branch"
+      fi
+    else
+      echo "Failed to remove worktree: $branch (may have changes -- use git worktree remove --force)" >&2
+    fi
+  done
+}
+
 # Create a new worktree as a sibling directory of the main worktree.
 # If a local branch with the given name exists, it's checked out;
 # otherwise a new branch is created.
@@ -205,6 +306,7 @@ Commands:
   wt                Open fzf worktree picker
   wt <path>         Switch to worktree at path
   wt add <branch>   Create new worktree (and branch if needed)
+  wt clean            Review and batch-delete stale worktrees
 
 fzf keybindings:
   enter    Switch to selected worktree
@@ -212,6 +314,11 @@ fzf keybindings:
   ctrl-x   Delete worktree (with confirmation)
   ctrl-a   Create new worktree
 EOF
+    return
+  fi
+
+  if [[ "$1" == "clean" ]]; then
+    _wt_clean "${@:2}"
     return
   fi
 
@@ -302,7 +409,7 @@ _wt() {
   fi
 
   local -a wt_descs subcmds
-  subcmds=("add:Create a new worktree")
+  subcmds=("add:Create a new worktree" "clean:Review and delete stale worktrees")
   while IFS=$'\t' read -r branch rel abs; do
     wt_descs+=("${rel//:/\\:}:$branch_icon $branch")
   done < <(_wt_entries)
