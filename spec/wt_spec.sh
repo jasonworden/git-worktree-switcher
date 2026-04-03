@@ -74,6 +74,19 @@ Describe "wt"
     End
   End
 
+  Describe "wt clean --no-gh"
+    It "skips gh checks and still reports no worktrees"
+      wt_clean_no_gh() { wt clean --no-gh 2>/dev/null; }
+      When call wt_clean_no_gh
+      The output should include "No worktrees to clean"
+    End
+
+    It "'wt --help' documents --no-gh flag"
+      When call wt --help
+      The output should include "--no-gh"
+    End
+  End
+
   Describe "wt list aliases"
     It "'wt --help' documents list aliases"
       When call wt --help
