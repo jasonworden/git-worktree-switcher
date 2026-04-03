@@ -194,12 +194,13 @@ _wt_clean() {
   fi
 
   # Format for fzf: icon + branch + evidence, with abs_path after tab
-  # ANSI color codes
   local c_green=$'\033[32m' c_yellow=$'\033[33m' c_red=$'\033[31m'
   local c_dim=$'\033[2m' c_bold=$'\033[1m' c_reset=$'\033[0m'
+  local safe_char=$'\u2713' warn_char=$'\u26a0' dot=$'\u00b7'
 
   local fzf_lines=()
-  local verdict branch wt_path evidence icon colored_evidence
+  local verdict branch wt_path evidence icon colored_evidence p colored_p
+  local -a pieces
 
   # Compute max branch width for column alignment
   local max_branch_width=0
@@ -211,22 +212,15 @@ _wt_clean() {
   for v in "${verdicts[@]}"; do
     IFS=$'\t' read -r verdict branch wt_path evidence <<< "$v"
 
-    # Colorize icon
     if [[ "$verdict" == "safe" ]]; then
-      icon="${c_green}\u2713${c_reset}"
+      icon="${c_green}${safe_char}${c_reset}"
     else
-      icon="${c_yellow}\u26a0${c_reset}"
+      icon="${c_yellow}${warn_char}${c_reset}"
     fi
 
     # Colorize individual evidence pieces
     colored_evidence=""
-    local IFS_BAK="$IFS"
-    IFS=' · '
-    local -a pieces=( ${=evidence} )
-    IFS="$IFS_BAK"
-    # Re-split properly on the dot separator
     pieces=("${(@s: · :)evidence}")
-    local p colored_p
     for p in "${pieces[@]}"; do
       case "$p" in
         PR\ *merged)       colored_p="${c_green}${p}${c_reset}" ;;
@@ -237,7 +231,7 @@ _wt_clean() {
         *)                 colored_p="$p" ;;
       esac
       if [[ -n "$colored_evidence" ]]; then
-        colored_evidence="${colored_evidence} ${c_dim}\u00b7${c_reset} ${colored_p}"
+        colored_evidence="${colored_evidence} ${c_dim}${dot}${c_reset} ${colored_p}"
       else
         colored_evidence="$colored_p"
       fi
