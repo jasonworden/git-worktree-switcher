@@ -9,6 +9,7 @@ Type `wt` to get a fuzzy-searchable list of your worktrees. Select one to `cd` i
 ## Prerequisites
 
 - [fzf](https://github.com/junegunn/fzf)
+- [gh](https://cli.github.com/) (optional — enables PR merge detection in `wt clean`)
 
 ## Installation
 
@@ -53,6 +54,8 @@ source /path/to/git-worktree-switcher.plugin.zsh
 wt              # opens fzf picker
 wt <path>       # cd directly to a worktree
 wt add <name>   # create a new worktree (and branch if needed)
+wt clean        # review and batch-delete stale worktrees
+wt clean --keep-branches  # delete worktrees but keep local branches
 wt<tab>         # tab-complete worktree paths and subcommands
 wt add <tab>    # tab-complete branch names
 ```
@@ -65,12 +68,14 @@ wt add <tab>    # tab-complete branch names
 | `ctrl-a` | Create a new worktree (prompts for branch name, offers to open in editor) |
 | `ctrl-o` | Open in editor (`$WT_OPENER`, default: `code`) |
 | `ctrl-x` | Delete selected worktree (with confirmation) |
+| `ctrl-g` | Open cleanup helper (`wt clean`) |
 
 ### Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WT_OPENER` | `code` | Editor command used by `ctrl-o` |
+| `WT_CLEAN_KEEP_BRANCHES` | unset | Set to `1` to keep local branches when cleaning |
 
 ### Local development
 
