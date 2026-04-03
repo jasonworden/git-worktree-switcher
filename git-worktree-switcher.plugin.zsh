@@ -333,9 +333,10 @@ Commands:
 
 fzf keybindings:
   enter    Switch to selected worktree
+  ctrl-a   Create new worktree
   ctrl-o   Open in editor ($WT_OPENER, default: code)
   ctrl-x   Delete worktree (with confirmation)
-  ctrl-a   Create new worktree
+  ctrl-g   Open cleanup helper (wt clean)
 EOF
     return
   fi
