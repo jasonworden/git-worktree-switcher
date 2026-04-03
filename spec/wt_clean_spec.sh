@@ -17,3 +17,55 @@ Describe "_wt_default_branch"
     The status should be success
   End
 End
+
+Describe "_wt_has_changes"
+  Include "$SHELLSPEC_PROJECT_ROOT/spec/spec_helper.sh"
+
+  setup() {
+    TEST_REPO=$(create_test_repo)
+    cd "$TEST_REPO"
+    source "$PLUGIN_PATH"
+  }
+
+  cleanup() { cleanup_test_repo "$TEST_REPO"; }
+  BeforeEach "setup"
+  AfterEach "cleanup"
+
+  It "returns 1 (false) for a clean worktree"
+    When call _wt_has_changes "$TEST_REPO"
+    The status should be failure
+  End
+
+  It "returns 0 (true) when there are uncommitted changes"
+    echo "dirty" > "$TEST_REPO/newfile.txt"
+    When call _wt_has_changes "$TEST_REPO"
+    The status should be success
+  End
+End
+
+Describe "_wt_unique_commits"
+  Include "$SHELLSPEC_PROJECT_ROOT/spec/spec_helper.sh"
+
+  setup() {
+    TEST_REPO=$(create_test_repo)
+    cd "$TEST_REPO"
+    source "$PLUGIN_PATH"
+    WT_PATH=$(add_test_worktree "$TEST_REPO" "feature-x")
+  }
+
+  cleanup() { cleanup_test_repo "$TEST_REPO"; }
+  BeforeEach "setup"
+  AfterEach "cleanup"
+
+  It "returns 0 when branch has no unique commits"
+    When call _wt_unique_commits "feature-x"
+    The output should equal "0"
+  End
+
+  It "returns count of unique commits ahead of default branch"
+    git -C "$WT_PATH" commit --allow-empty -m "unique1" --quiet
+    git -C "$WT_PATH" commit --allow-empty -m "unique2" --quiet
+    When call _wt_unique_commits "feature-x"
+    The output should equal "2"
+  End
+End
