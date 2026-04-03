@@ -32,6 +32,16 @@ add_test_worktree() {
   echo "$target"
 }
 
+# Create a worktree inside the main worktree directory (like .claude/worktrees/)
+add_nested_test_worktree() {
+  local main_wt="$1" name="$2"
+  local subdir="$main_wt/.worktrees"
+  mkdir -p "$subdir"
+  local target="$subdir/$name"
+  git -C "$main_wt" worktree add -b "$name" "$target" --quiet 2>/dev/null
+  echo "$target"
+}
+
 # Creates a bare remote and configures the test repo to track it
 create_test_remote() {
   local main_wt="$1"

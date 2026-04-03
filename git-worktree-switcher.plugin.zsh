@@ -7,23 +7,31 @@
 #   branch_name \t relative_path \t absolute_path
 # The main worktree's relative path is shown as "."
 _wt_entries() {
-  git worktree list --porcelain 2>/dev/null | awk '
-    /^worktree / {
-      if (length(path) > 0) { emit() }
-      path = substr($0, 10)
-      if (length(main) == 0) main = path
-      branch = ""
-    }
-    /^branch / { branch = substr($0, 8); sub("refs/heads/", "", branch) }
-    /^HEAD /   { if (length(branch) == 0) branch = "(detached)" }
-    END { if (length(path) > 0) emit() }
-    function emit() {
-      rel = path
-      if (path == main) { rel = "." }
-      else { sub(main "/", "", rel) }
-      printf "%s\t%s\t%s\n", branch, rel, path
-    }
-  '
+  local line wt_path wt_branch main_path rel
+  while IFS= read -r line; do
+    case "$line" in
+      worktree\ *)
+        if [[ -n "$wt_path" ]]; then
+          [[ "$wt_path" == "$main_path" ]] && rel="." || rel="${wt_path#$main_path/}"
+          printf '%s\t%s\t%s\n' "$wt_branch" "$rel" "$wt_path"
+        fi
+        wt_path="${line#worktree }"
+        [[ -z "$main_path" ]] && main_path="$wt_path"
+        wt_branch=""
+        ;;
+      branch\ *)
+        wt_branch="${line#branch refs/heads/}"
+        ;;
+      HEAD\ *)
+        [[ -z "$wt_branch" ]] && wt_branch="(detached)"
+        ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+  # Emit last entry
+  if [[ -n "$wt_path" ]]; then
+    [[ "$wt_path" == "$main_path" ]] && rel="." || rel="${wt_path#$main_path/}"
+    printf '%s\t%s\t%s\n' "$wt_branch" "$rel" "$wt_path"
+  fi
 }
 
 # Returns the absolute path of the main (first) worktree
@@ -217,11 +225,20 @@ _wt_clean() {
   local verdicts=()
   local raw=$(_wt_entries)
 
-  while IFS=$'\t' read -r branch rel abs <&3; do
+  # Collect worktree pairs first, then check each outside the read loop
+  local -a wt_pairs
+  local branch rel abs
+  while IFS=$'\t' read -r branch rel abs; do
     [[ "$abs" == "$main_wt" ]] && continue
     [[ "$branch" == "(detached)" ]] && continue
+    wt_pairs+=("$branch"$'\t'"$abs")
+  done <<< "$raw"
+
+  local pair
+  for pair in "${wt_pairs[@]}"; do
+    IFS=$'\t' read -r branch abs <<< "$pair"
     verdicts+=("$(_wt_check_worktree "$branch" "$abs" "$gh_mode" "$default_branch")")
-  done 3<<< "$raw"
+  done
 
   if [[ ${#verdicts[@]} -eq 0 ]]; then
     echo "No worktrees to clean (only main worktree exists)."
@@ -389,10 +406,10 @@ wt() {
 Usage: wt [command] [args]
 
 Commands:
-  wt                Open fzf worktree picker
-  wt <path>         Switch to worktree at path
-  wt add <branch>   Create new worktree (and branch if needed)
-  wt clean            Review and batch-delete stale worktrees
+  wt                  Open fzf worktree picker (alias: list, ls, l)
+  wt <path>           Switch to worktree at path
+  wt add <branch>     Create new worktree (and branch if needed)
+  wt clean            Review and batch-delete stale worktrees (alias: c)
 
 fzf keybindings:
   enter    Switch to selected worktree
@@ -404,7 +421,7 @@ EOF
     return
   fi
 
-  if [[ "$1" == "clean" ]]; then
+  if [[ "$1" == "clean" || "$1" == "c" ]]; then
     _wt_clean "${@:2}"
     return
   fi
@@ -412,6 +429,11 @@ EOF
   if [[ "$1" == "add" ]]; then
     _wt_add "${@:2}"
     return
+  fi
+
+  # list/ls/l fall through to the interactive picker
+  if [[ "$1" == "list" || "$1" == "ls" || "$1" == "l" ]]; then
+    shift
   fi
 
   # Direct path: `wt some/path` cds straight there
@@ -453,23 +475,13 @@ EOF
   # Format entries as "icon branch  icon path\tabs_path" for fzf.
   # --with-nth=1 shows only the display portion (before \t).
   # --expect makes fzf output the pressed key on line 1, selection on line 2.
-  local safe_icon=$'\u2713'
-  local warn_icon=$'\u26a0'
-  local main_abs default_branch
-  main_abs=$(_wt_main_worktree)
-  default_branch=$(_wt_default_branch)
+  local -a fzf_lines
+  while IFS=$'\t' read -r branch rel abs; do
+    fzf_lines+=("$(printf "%s %-${max_width}s  %s %s\t%s" \
+      "$branch_icon" "$branch" "$folder" "$rel" "$abs")")
+  done <<< "$raw"
 
-  local status_icon status
-  local result=$(while IFS=$'\t' read -r branch rel abs <&3; do
-    status_icon=""
-    if [[ "$branch" != "(detached)" && "$abs" != "$main_abs" ]]; then
-      status=$(_wt_quick_status "$branch" "$abs" "$default_branch")
-      [[ "$status" == "safe" ]] && status_icon=" $safe_icon"
-      [[ "$status" == "warn" ]] && status_icon=" $warn_icon"
-    fi
-    printf "%s %-${max_width}s%s  %s %s\t%s\n" \
-      "$branch_icon" "$branch" "$status_icon" "$folder" "$rel" "$abs"
-  done 3<<< "$raw" | fzf --height=40% --delimiter='\t' --with-nth=1 \
+  local result=$(printf '%s\n' "${fzf_lines[@]}" | fzf --height=40% --delimiter='\t' --with-nth=1 \
     --header="enter:switch │ ctrl-a:add │ ctrl-o:open │ ctrl-x:delete │ ctrl-g:clean" \
     --expect=ctrl-o,ctrl-x,ctrl-a,ctrl-g)
 
@@ -511,7 +523,7 @@ _wt() {
   fi
 
   local -a wt_descs subcmds
-  subcmds=("add:Create a new worktree" "clean:Review and delete stale worktrees")
+  subcmds=("add:Create a new worktree" "clean:Review and delete stale worktrees" "c:Alias for clean" "list:Open fzf picker" "ls:Alias for list" "l:Alias for list")
   while IFS=$'\t' read -r branch rel abs; do
     wt_descs+=("${rel//:/\\:}:$branch_icon $branch")
   done < <(_wt_entries)
