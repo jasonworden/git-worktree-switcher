@@ -21,3 +21,6 @@ node_modules/
 
 # Superpowers
 .superpowers/
+
+# Rust
+rust/target/
