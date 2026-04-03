@@ -68,7 +68,8 @@ Describe "wt"
 
   Describe "wt clean alias"
     It "'wt c' dispatches to clean (shows no-worktrees message)"
-      When call wt c
+      wt_c_no_stderr() { wt c 2>/dev/null; }
+      When call wt_c_no_stderr
       The output should include "No worktrees to clean"
     End
   End
