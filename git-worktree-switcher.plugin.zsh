@@ -88,6 +88,59 @@ _wt_pr_merged() {
   return 1
 }
 
+# Checks a single worktree and outputs a tab-delimited verdict line.
+# Args: branch_name abs_path gh_mode("gh" or "no-gh")
+# Output: verdict\tbranch\tpath\tevidence
+_wt_check_worktree() {
+  local branch="$1" wt_path="$2" gh_mode="$3"
+  local evidence=()
+  local dominated=true  # assume safe until proven otherwise
+
+  # Signal: PR merged (only in gh mode)
+  if [[ "$gh_mode" == "gh" ]]; then
+    local pr_num
+    if pr_num=$(_wt_pr_merged "$branch"); then
+      evidence+=("PR #${pr_num} merged")
+    fi
+  fi
+
+  # Signal: remote branch gone
+  if _wt_remote_branch_gone "$branch"; then
+    evidence+=("remote gone")
+  else
+    dominated=false
+  fi
+
+  # Signal: unique commits
+  local ahead
+  ahead=$(_wt_unique_commits "$branch")
+  if [[ "$ahead" -gt 0 ]]; then
+    evidence+=("${ahead} commit(s) ahead")
+    dominated=false
+  fi
+
+  # Signal: uncommitted changes
+  if _wt_has_changes "$wt_path"; then
+    evidence+=("uncommitted changes")
+    dominated=false
+  else
+    evidence+=("clean")
+  fi
+
+  # Verdict: safe only if no concerns AND (remote gone or PR merged)
+  local verdict="warn"
+  local has_gone_signal=false
+  for e in "${evidence[@]}"; do
+    [[ "$e" == *"merged"* || "$e" == "remote gone" ]] && has_gone_signal=true
+  done
+  if $dominated && $has_gone_signal; then
+    verdict="safe"
+  fi
+
+  local evidence_str="${(j: · :)evidence}"
+  printf "%s\t%s\t%s\t%s\n" "$verdict" "$branch" "$wt_path" "$evidence_str"
+}
+
 # Create a new worktree as a sibling directory of the main worktree.
 # If a local branch with the given name exists, it's checked out;
 # otherwise a new branch is created.

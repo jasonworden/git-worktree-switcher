@@ -140,3 +140,39 @@ Describe "_wt_pr_merged"
     The status should be failure
   End
 End
+
+Describe "_wt_check_worktree"
+  Include "$SHELLSPEC_PROJECT_ROOT/spec/spec_helper.sh"
+
+  setup() {
+    TEST_REPO=$(create_test_repo)
+    cd "$TEST_REPO"
+    source "$PLUGIN_PATH"
+    WT_PATH=$(add_test_worktree "$TEST_REPO" "feature-x")
+  }
+
+  cleanup() { cleanup_test_repo "$TEST_REPO"; }
+  BeforeEach "setup"
+  AfterEach "cleanup"
+
+  It "outputs safe verdict for clean worktree with no remote"
+    When call _wt_check_worktree "feature-x" "$WT_PATH" "no-gh"
+    The output should include "safe"
+    The output should include "remote gone"
+    The status should be success
+  End
+
+  It "outputs warning for worktree with uncommitted changes"
+    echo "dirty" > "$WT_PATH/file.txt"
+    When call _wt_check_worktree "feature-x" "$WT_PATH" "no-gh"
+    The output should include "warn"
+    The output should include "uncommitted changes"
+  End
+
+  It "outputs warning for worktree with unique commits"
+    git -C "$WT_PATH" commit --allow-empty -m "unique" --quiet
+    When call _wt_check_worktree "feature-x" "$WT_PATH" "no-gh"
+    The output should include "warn"
+    The output should include "commit"
+  End
+End
