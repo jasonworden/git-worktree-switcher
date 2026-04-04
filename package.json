@@ -1,0 +1,11 @@
+{
+  "name": "git-worktree-switcher",
+  "private": true,
+  "description": "Zsh plugin + wt-core (Node used only for dev convenience scripts)",
+  "scripts": {
+    "reload-zsh": "node -e \"console.log('source ' + require('path').resolve('git-worktree-switcher.plugin.zsh'))\"",
+    "rebuild": "bash scripts/wt-rebuild.sh",
+    "rebuild:release": "bash scripts/wt-rebuild.sh --release",
+    "go": "bash scripts/wt-go"
+  }
+}

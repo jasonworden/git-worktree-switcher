@@ -8,7 +8,11 @@ pub struct Verdict {
     pub verdict: String,
     pub branch: String,
     pub path: String,
-    pub evidence: String,
+    /// Optional columns for aligned UI (remote gone last — often empty).
+    pub pr: String,
+    pub ahead: String,
+    pub tree: String,
+    pub remote: String,
 }
 
 /// Fetch merged PRs from GitHub via GraphQL. Returns branch_name -> PR number.
@@ -98,7 +102,7 @@ fn parse_owner_repo(url: &str) -> Option<(String, String)> {
 }
 
 /// Run the full clean-check pipeline: fetch, gather PR data, check all worktrees.
-/// Output: TSV lines of verdict\tbranch\tpath\tevidence
+/// Output: TSV `verdict\tbranch\tpath\tpr\tahead\ttree\tremote` (empty cells allowed).
 pub fn run_clean_check(use_gh: bool) {
     // Background: git fetch --prune
     let mut fetch_child = Command::new("git")
@@ -128,11 +132,14 @@ pub fn run_clean_check(use_gh: bool) {
 
         let verdict = check_worktree(wt, &default_branch, &merged_prs);
         println!(
-            "{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
             verdict.verdict,
             verdict.branch,
             verdict.path,
-            verdict.evidence
+            verdict.pr,
+            verdict.ahead,
+            verdict.tree,
+            verdict.remote,
         );
     }
 }
@@ -142,36 +149,39 @@ fn check_worktree(
     default_branch: &str,
     merged_prs: &HashMap<String, u64>,
 ) -> Verdict {
-    let mut evidence = Vec::new();
     let mut has_gone_signal = false;
     let mut has_concerns = false;
 
-    // PR merged?
-    if let Some(pr_num) = merged_prs.get(&wt.branch) {
-        evidence.push(format!("PR #{pr_num} merged"));
+    let pr = if let Some(pr_num) = merged_prs.get(&wt.branch) {
         has_gone_signal = true;
-    }
-
-    // Remote branch gone?
-    if git::remote_branch_gone(&wt.branch) {
-        evidence.push("remote gone".to_string());
-        has_gone_signal = true;
-    }
-
-    // Unique commits ahead?
-    let ahead = git::unique_commits(&wt.branch, default_branch);
-    if ahead > 0 {
-        evidence.push(format!("{ahead} commit(s) ahead"));
-        has_concerns = true;
-    }
-
-    // Uncommitted changes?
-    if git::has_changes(&wt.path) {
-        evidence.push("uncommitted changes".to_string());
-        has_concerns = true;
+        format!("PR #{pr_num} merged")
     } else {
-        evidence.push("clean".to_string());
-    }
+        String::new()
+    };
+
+    let ahead_n = git::unique_commits(&wt.branch, default_branch);
+    let ahead = if ahead_n > 0 {
+        has_concerns = true;
+        format!("{ahead_n} commit(s) ahead")
+    } else {
+        String::new()
+    };
+
+    let dirty = git::has_changes(&wt.path);
+    let tree = if dirty {
+        has_concerns = true;
+        "uncommitted changes".to_string()
+    } else {
+        "clean".to_string()
+    };
+
+    // Optional signal last so UI columns stay aligned when absent.
+    let remote = if git::remote_branch_gone(&wt.branch) {
+        has_gone_signal = true;
+        "remote gone".to_string()
+    } else {
+        String::new()
+    };
 
     let verdict = if !has_concerns && has_gone_signal {
         "safe"
@@ -183,31 +193,46 @@ fn check_worktree(
         verdict: verdict.to_string(),
         branch: wt.branch.clone(),
         path: wt.path.to_string_lossy().to_string(),
-        evidence: evidence.join(" \u{00b7} "), // middle dot separator
+        pr,
+        ahead,
+        tree,
+        remote,
+    }
+}
+
+/// Same rules as `run_quick_status`, for batched picker output.
+pub fn quick_status_label(
+    branch: &str,
+    wt_path: &std::path::Path,
+    default_branch: &str,
+) -> Option<&'static str> {
+    if branch == "(detached)" {
+        return None;
+    }
+
+    let remote_gone = git::remote_branch_gone(branch);
+    let ahead = git::unique_commits(branch, default_branch);
+    let dirty = git::has_changes(wt_path);
+
+    if remote_gone && ahead == 0 && !dirty {
+        Some("safe")
+    } else if ahead > 0 || dirty {
+        Some("warn")
+    } else {
+        None
     }
 }
 
 /// Quick local-only staleness check. Prints "safe", "warn", or nothing.
 pub fn run_quick_status(branch: &str, wt_path: &str, default_branch: Option<&str>) {
-    if branch == "(detached)" {
-        return;
-    }
-
     let default = default_branch
         .map(|s| s.to_string())
         .or_else(|| git::default_branch())
         .unwrap_or_else(|| "main".to_string());
 
-    let remote_gone = git::remote_branch_gone(branch);
-    let ahead = git::unique_commits(branch, &default);
-    let dirty = git::has_changes(std::path::Path::new(wt_path));
-
-    if remote_gone && ahead == 0 && !dirty {
-        println!("safe");
-    } else if ahead > 0 || dirty {
-        println!("warn");
+    if let Some(s) = quick_status_label(branch, std::path::Path::new(wt_path), &default) {
+        println!("{s}");
     }
-    // else: print nothing (unknown)
 }
 
 /// Print completions: all local and remote branch names.

@@ -68,7 +68,6 @@ source /path/to/git-worktree-switcher.plugin.zsh
 
 ```
 wt              # opens fzf picker
-wt <path>       # cd directly to a worktree
 wt add <name>   # create a new worktree (and branch if needed)
 wt clean        # review and batch-delete stale worktrees
 wt clean --keep-branches  # delete worktrees but keep local branches

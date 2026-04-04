@@ -7,7 +7,11 @@ mod git;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "wt-core", about = "Fast git worktree manager (core binary)")]
+#[command(
+    name = "wt-core",
+    version,
+    about = "Fast git worktree manager (core binary)"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -17,6 +21,9 @@ struct Cli {
 enum Commands {
     /// List all worktrees as TSV: branch, relative_path, absolute_path
     Entries,
+
+    /// Picker lines: branch, rel, abs, staleness (one `git`/batch pass for zsh fzf)
+    Picker,
 
     /// Print the absolute path of the main worktree
     MainWorktree,
@@ -65,6 +72,8 @@ fn main() {
 
     match cli.command {
         Commands::Entries => entries::run(),
+
+        Commands::Picker => entries::run_picker(),
 
         Commands::MainWorktree => {
             if let Some(path) = git::main_worktree() {
