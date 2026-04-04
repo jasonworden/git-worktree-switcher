@@ -1,0 +1,93 @@
+name: Validate PR description
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Validate template and labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const core = require('@actions/core');
+            const pr = context.payload.pull_request;
+
+            if (pr.draft) {
+              core.info('Skipping: draft PR');
+              return;
+            }
+
+            const labels = (pr.labels || []).map((l) => l.name.toLowerCase());
+
+            const blocking = ['invalid', 'wontfix'];
+            const blocked = blocking.filter((b) => labels.includes(b));
+            if (blocked.length > 0) {
+              core.setFailed(
+                `PR has blocking label(s): ${blocked.join(', ')} — remove them before merge.`,
+              );
+              return;
+            }
+
+            if (labels.includes('wip')) {
+              core.info('Skipping: wip label');
+              return;
+            }
+
+            const body = (pr.body || '').trim();
+            if (!body) {
+              core.setFailed('PR description is empty.');
+              return;
+            }
+
+            if (!body.includes('## Summary')) {
+              core.setFailed('PR description must include a ## Summary section.');
+              return;
+            }
+
+            if (body.includes('REPLACE_WITH_SUMMARY')) {
+              core.setFailed(
+                'Replace the summary placeholder (REPLACE_WITH_SUMMARY) with a real summary.',
+              );
+              return;
+            }
+
+            const typeSection = extractSection(body, '## Type of change');
+            if (!typeSection) {
+              core.setFailed('PR description must include a ## Type of change section.');
+              return;
+            }
+            const typeChecked = (typeSection.match(/^-\s*\[[xX]\]/gm) || []).length;
+            if (typeChecked < 1) {
+              core.setFailed('Check at least one option under ## Type of change ([x]).');
+              return;
+            }
+
+            const bumpSection = extractSection(body, '## Release version bump');
+            if (!bumpSection) {
+              core.setFailed('PR description must include a ## Release version bump section.');
+              return;
+            }
+            const bumpChecked = (bumpSection.match(/^-\s*\[[xX]\]/gm) || []).length;
+            if (bumpChecked !== 1) {
+              core.setFailed(
+                'Under ## Release version bump, check exactly one of: No version bump, Patch, Minor, Major.',
+              );
+              return;
+            }
+
+            core.info('PR description validation passed.');
+
+            function extractSection(text, heading) {
+              const i = text.indexOf(heading);
+              if (i === -1) return null;
+              const after = text.slice(i + heading.length);
+              const m = after.match(/\n## /);
+              return m ? after.slice(0, m.index) : after;
+            }

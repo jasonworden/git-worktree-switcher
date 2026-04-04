@@ -11,7 +11,9 @@
 
 # VSCode / Cursor
 .vscode/
-.cursor/
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
 
 # Claude Code
 .claude/

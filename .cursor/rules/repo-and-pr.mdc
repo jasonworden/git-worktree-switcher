@@ -1,0 +1,11 @@
+---
+description: Repository overview, PR template, and draft-first PRs
+alwaysApply: true
+---
+
+# git-worktree-switcher
+
+- Rust core in `rust/` (`wt-core`); zsh plugin at repo root; tests under `spec/`.
+- Before opening a PR, read **`PULL_REQUEST_TEMPLATE.md`** and follow **`.agents/skills/create-pull-request/SKILL.md`**.
+- See **`AGENTS.md`** for paths and the skills index.
+- When creating a PR (e.g. via `gh pr create`), **default to `--draft`** unless the user clearly asked for ready-for-review and the template is complete.
