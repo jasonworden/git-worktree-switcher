@@ -40,9 +40,9 @@ Describe "_wt_delete"
       printf "Remove worktree '%s'? [y/N] " "$name"
       echo
       if [[ "$PWD" == "$wt_path"* ]]; then
-        cd "$(_wt_main_worktree)"
+        cd "$(wt-core main-worktree)"
       fi
-      git worktree remove "$wt_path"
+      wt-core delete "$wt_path"
     }
     When call wt_delete_confirm "$WT_PATH"
     The path "$WT_PATH" should not be directory
@@ -53,9 +53,9 @@ Describe "_wt_delete"
     wt_delete_from_inside() {
       local wt_path="$1"
       if [[ "$PWD" == "$wt_path"* ]]; then
-        cd "$(_wt_main_worktree)"
+        cd "$(wt-core main-worktree)"
       fi
-      git worktree remove "$wt_path"
+      wt-core delete "$wt_path"
     }
     cd "$WT_PATH"
     When call wt_delete_from_inside "$WT_PATH"

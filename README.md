@@ -13,14 +13,30 @@ Type `wt` to get a fuzzy-searchable list of your worktrees. Select one to `cd` i
 
 ## Installation
 
-### zinit
+### Step 1: Install the core binary
+
+```zsh
+brew install jasonworden/tap/wt-core
+```
+
+Or build from source:
+
+```zsh
+cd rust && cargo install --path .
+```
+
+### Step 2: Install the zsh plugin
+
+The plugin is a thin wrapper that provides shell integration (`cd`, fzf picker, tab completion).
+
+#### zinit
 
 ```zsh
 zinit light jasonworden/git-worktree-switcher
 zinit cdreplay -q  # replay completions (needed for tab completion)
 ```
 
-### Oh My Zsh
+#### Oh My Zsh
 
 Clone into your custom plugins directory:
 
@@ -34,13 +50,13 @@ Then add to your plugins list in `.zshrc`:
 plugins=(... git-worktree-switcher)
 ```
 
-### Antigen
+#### Antigen
 
 ```zsh
 antigen bundle jasonworden/git-worktree-switcher
 ```
 
-### Manual
+#### Manual
 
 Source the plugin file in your `.zshrc`:
 
@@ -52,7 +68,6 @@ source /path/to/git-worktree-switcher.plugin.zsh
 
 ```
 wt              # opens fzf picker
-wt <path>       # cd directly to a worktree
 wt add <name>   # create a new worktree (and branch if needed)
 wt clean        # review and batch-delete stale worktrees
 wt clean --keep-branches  # delete worktrees but keep local branches
@@ -80,5 +95,22 @@ wt add <tab>    # tab-complete branch names
 ### Local development
 
 ```zsh
+# Build the binary
+cd rust && cargo build
+
+# Add to PATH
+export PATH="$PWD/target/debug:$PATH"
+
+# Source the plugin
 source ~/path/to/git-worktree-switcher/git-worktree-switcher.plugin.zsh
+```
+
+### Running tests
+
+```zsh
+# Rust unit tests
+cd rust && cargo test
+
+# Shell integration tests (requires shellspec)
+shellspec
 ```

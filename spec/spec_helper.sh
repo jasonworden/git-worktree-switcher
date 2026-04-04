@@ -8,6 +8,14 @@ export WT_OPENER=true
 
 PLUGIN_PATH="$SHELLSPEC_PROJECT_ROOT/git-worktree-switcher.plugin.zsh"
 
+# Build wt-core binary and add to PATH
+RUST_DIR="$SHELLSPEC_PROJECT_ROOT/rust"
+if [[ -d "$RUST_DIR" ]]; then
+  # Build once at the start (cargo is smart about no-op rebuilds)
+  (cd "$RUST_DIR" && cargo build --quiet 2>/dev/null)
+  export PATH="$RUST_DIR/target/debug:$PATH"
+fi
+
 # Resolve symlinks (macOS /var -> /private/var)
 resolve_path() {
   cd "$1" && pwd -P

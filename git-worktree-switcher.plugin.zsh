@@ -1,323 +1,151 @@
 # git-worktree-switcher - quickly switch between git worktrees using fzf
+# Thin zsh wrapper around the wt-core Rust binary.
+#
+# The anonymous function wrapper + emulate -LR zsh ensures that sourcing this
+# file is immune to the user's shell options (xtrace, err_exit, etc.).
+
+() {
+emulate -LR zsh
 
 # Editor used by ctrl-o in the fzf picker (supports multi-word commands)
 : ${WT_OPENER:=code}
 
-# Parse `git worktree list --porcelain` into tab-delimited rows:
-#   branch_name \t relative_path \t absolute_path
-# The main worktree's relative path is shown as "."
-_wt_entries() {
-  git worktree list --porcelain 2>/dev/null | awk '
-    /^worktree / {
-      if (length(path) > 0) { emit() }
-      path = substr($0, 10)
-      if (length(main) == 0) main = path
-      branch = ""
-    }
-    /^branch / { branch = substr($0, 8); sub("refs/heads/", "", branch) }
-    /^HEAD /   { if (length(branch) == 0) branch = "(detached)" }
-    END { if (length(path) > 0) emit() }
-    function emit() {
-      rel = path
-      if (path == main) { rel = "." }
-      else { sub(main "/", "", rel) }
-      printf "%s\t%s\t%s\n", branch, rel, path
-    }
-  '
-}
+# Directory containing this file (for reinstall hints when wt-core is outdated)
+: ${_wt_plugin_dir:="${${(%):-%x}:A:h}"}
 
-# Returns the absolute path of the main (first) worktree
-_wt_main_worktree() {
-  git worktree list --porcelain 2>/dev/null | awk '/^worktree / {print substr($0, 10); exit}'
-}
+# Verify wt-core binary is available
+if ! command -v wt-core &>/dev/null; then
+  echo "git-worktree-switcher: wt-core binary not found. Install via: brew install jasonworden/tap/wt-core" >&2
+  return
+fi
 
-# Returns the branch name of the main worktree (e.g., "main" or "master")
-_wt_default_branch() {
-  git worktree list --porcelain 2>/dev/null | awk '
-    /^branch / {
-      b = substr($0, 8)
-      sub("refs/heads/", "", b)
-      print b
-      exit
-    }
-  '
-}
-
-# Returns 0 if worktree has uncommitted/untracked changes, 1 if clean
-_wt_has_changes() {
-  local wt_path="$1"
-  [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]
-}
-
-# Returns the number of commits on <branch> not on the default branch.
-# Accepts optional second arg to avoid redundant _wt_default_branch calls.
-_wt_unique_commits() {
-  local branch="$1"
-  local default_branch="${2:-$(_wt_default_branch)}"
-  git log --oneline "$default_branch..$branch" 2>/dev/null | wc -l | tr -d ' '
-}
-
-# Returns 0 if the remote tracking branch is gone, 1 if it still exists
-_wt_remote_branch_gone() {
-  local branch="$1"
-  ! git show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null
-}
-
-# Returns 0 if gh CLI is installed and authed for current repo, 1 otherwise.
-# Prints a tip to stderr if gh is missing or unauthed.
-_wt_gh_available() {
-  if ! command -v gh &>/dev/null; then
-    echo "tip: brew install gh for PR merge detection" >&2
-    return 1
-  fi
-  if ! gh auth token &>/dev/null; then
-    echo "tip: run 'gh auth login' to enable PR status checks" >&2
-    return 1
-  fi
-  return 0
-}
-
-# Returns 0 if a merged PR exists for the given branch, 1 otherwise.
-# Outputs the PR number if found (e.g., "42").
-_wt_pr_merged() {
-  local branch="$1"
-  _wt_gh_available 2>/dev/null || return 1
-  local pr_number
-  pr_number=$(gh pr list --head "$branch" --state merged --json number --jq '.[0].number' 2>/dev/null)
-  [[ -n "$pr_number" ]] && echo "$pr_number" && return 0
-  return 1
-}
-
-# Fetches all merged PRs for the current repo in a single GraphQL call.
-# Populates the associative array _wt_merged_prs: branch_name -> PR number.
-# Returns 1 if gh is unavailable.
-_wt_fetch_merged_prs() {
-  typeset -gA _wt_merged_prs
-  _wt_merged_prs=()
-  _wt_gh_available 2>/dev/null || return 1
-
-  local owner repo remote_url
-  remote_url=$(git remote get-url origin 2>/dev/null) || return 1
-  # Extract owner/repo from git@host:owner/repo.git or https://host/owner/repo.git
-  if [[ "$remote_url" == git@* ]]; then
-    local path_part="${remote_url#*:}"
-    owner="${path_part%%/*}"
-    repo="${${path_part#*/}%.git}"
-  else
-    local path_part="${remote_url#https://*/}"
-    owner="${path_part%%/*}"
-    repo="${${path_part#*/}%.git}"
-  fi
-  [[ -z "$owner" || -z "$repo" ]] && return 1
-
-  local branch_name pr_number
-  while IFS=$'\t' read -r branch_name pr_number; do
-    [[ -n "$branch_name" ]] && _wt_merged_prs[$branch_name]="$pr_number"
-  done < <(gh api graphql \
-    -f query='query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){pullRequests(first:100,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{headRefName number}}}}' \
-    -f owner="$owner" -f repo="$repo" \
-    --jq '.data.repository.pullRequests.nodes[] | [.headRefName, (.number | tostring)] | @tsv' 2>/dev/null)
-}
-
-# Checks a single worktree and outputs a tab-delimited verdict line.
-# Args: branch_name abs_path gh_mode("gh" or "no-gh") [default_branch]
-# Output: verdict\tbranch\tpath\tevidence
-_wt_check_worktree() {
-  local branch="$1" wt_path="$2" gh_mode="$3" default_branch="${4:-$(_wt_default_branch)}"
-  local evidence=()
-  local has_gone_signal=false
-  local has_concerns=false
-
-  # Signal: PR merged (lookup from pre-fetched associative array)
-  if [[ "$gh_mode" == "gh" ]] && [[ -n "${_wt_merged_prs[$branch]:-}" ]]; then
-    evidence+=("PR #${_wt_merged_prs[$branch]} merged")
-    has_gone_signal=true
-  fi
-
-  # Signal: remote branch gone
-  if _wt_remote_branch_gone "$branch"; then
-    evidence+=("remote gone")
-    has_gone_signal=true
-  fi
-
-  # Signal: unique commits
-  local ahead
-  ahead=$(_wt_unique_commits "$branch" "$default_branch")
-  if [[ "$ahead" -gt 0 ]]; then
-    evidence+=("${ahead} commit(s) ahead")
-    has_concerns=true
-  fi
-
-  # Signal: uncommitted changes
-  if _wt_has_changes "$wt_path"; then
-    evidence+=("uncommitted changes")
-    has_concerns=true
-  else
-    evidence+=("clean")
-  fi
-
-  # Verdict: safe only if no concerns AND (remote gone or PR merged)
-  local verdict="warn"
-  if ! $has_concerns && $has_gone_signal; then
-    verdict="safe"
-  fi
-
-  local evidence_str="${(j: · :)evidence}"
-  printf "%s\t%s\t%s\t%s\n" "$verdict" "$branch" "$wt_path" "$evidence_str"
-}
-
-# Quick local-only staleness check for a worktree.
-# Returns: "safe", "warn", or "" (unknown)
-_wt_quick_status() {
-  local branch="$1" wt_path="$2" default_branch="${3:-$(_wt_default_branch)}"
-
-  [[ "$branch" == "(detached)" ]] && return
-
-  local remote_gone=false
-  _wt_remote_branch_gone "$branch" && remote_gone=true
-
-  local ahead
-  ahead=$(_wt_unique_commits "$branch" "$default_branch")
-
-  local dirty=false
-  _wt_has_changes "$wt_path" && dirty=true
-
-  if $remote_gone && [[ "$ahead" -eq 0 ]] && ! $dirty; then
-    echo "safe"
-  elif [[ "$ahead" -gt 0 ]] || $dirty; then
-    echo "warn"
-  fi
-}
-
+# ---------------------------------------------------------------------------
+# wt clean
+# ---------------------------------------------------------------------------
 _wt_clean() {
+  { set +x } 2>/dev/null   # silence even the trace of set +x
+  emulate -LR zsh
+
   local keep_branches=false
   if [[ "$1" == "--keep-branches" ]] || [[ "${WT_CLEAN_KEEP_BRANCHES:-0}" == "1" ]]; then
     keep_branches=true
   fi
 
-  # Pre-flight: check gh availability (prints tips to stderr)
-  local gh_mode="no-gh"
-  if _wt_gh_available; then
-    gh_mode="gh"
+  local gh_flag=""
+  if wt-core gh-available 2>/dev/null; then
+    gh_flag="--gh"
+  else
+    echo "tip: brew install gh for PR merge detection" >&2
   fi
 
-  # Freshen remote state (background) while we fetch merged PRs (foreground)
   echo "Fetching latest remote state..."
-  git fetch --prune --quiet 2>/dev/null &
-  local fetch_pid=$!
-  if [[ "$gh_mode" == "gh" ]]; then
-    _wt_fetch_merged_prs
-  fi
-  wait $fetch_pid
 
-  # Gather verdicts for all non-main worktrees
-  local main_wt default_branch
-  main_wt=$(_wt_main_worktree)
-  default_branch=$(_wt_default_branch)
-  local verdicts=()
-  local raw=$(_wt_entries)
+  local raw
+  raw=$(wt-core clean-check $gh_flag 2>/dev/null)
 
-  while IFS=$'\t' read -r branch rel abs <&3; do
-    [[ "$abs" == "$main_wt" ]] && continue
-    [[ "$branch" == "(detached)" ]] && continue
-    verdicts+=("$(_wt_check_worktree "$branch" "$abs" "$gh_mode" "$default_branch")")
-  done 3<<< "$raw"
-
-  if [[ ${#verdicts[@]} -eq 0 ]]; then
+  if [[ -z "$raw" ]]; then
     echo "No worktrees to clean (only main worktree exists)."
     return
   fi
 
-  # Format for fzf: icon + branch + evidence, with abs_path after tab
+  # --- Build fzf display lines (all in-process, no subshell) ---
   local c_green=$'\033[32m' c_yellow=$'\033[33m' c_red=$'\033[31m'
   local c_dim=$'\033[2m' c_bold=$'\033[1m' c_reset=$'\033[0m'
-  local safe_char=$'\u2713' warn_char=$'\u26a0' dot=$'\u00b7'
+  local safe_char=$'\u2713' warn_char=$'\u26a0'
 
-  local fzf_lines=()
-  local verdict branch wt_path evidence icon colored_evidence p colored_p
-  local -a pieces
+  local -a fzf_lines
+  local verdict branch wt_path ev_pr ev_ahead ev_tree ev_remote
+  local max_bw=0 max_pr=9 max_ah=5 max_tr=8 max_rm=6
 
-  # Compute max branch width for column alignment
-  local max_branch_width=0
-  for v in "${verdicts[@]}"; do
-    IFS=$'\t' read -r verdict branch _ _ <<< "$v"
-    (( ${#branch} > max_branch_width )) && max_branch_width=${#branch}
-  done
+  while IFS=$'\t' read -r verdict branch wt_path ev_pr ev_ahead ev_tree ev_remote; do
+    (( ${#branch} > max_bw )) && max_bw=${#branch}
+    (( ${#ev_pr} > max_pr )) && max_pr=${#ev_pr}
+    (( ${#ev_ahead} > max_ah )) && max_ah=${#ev_ahead}
+    (( ${#ev_tree} > max_tr )) && max_tr=${#ev_tree}
+    (( ${#ev_remote} > max_rm )) && max_rm=${#ev_remote}
+  done <<< "$raw"
 
-  for v in "${verdicts[@]}"; do
-    IFS=$'\t' read -r verdict branch wt_path evidence <<< "$v"
-
+  local icon disp pad cell
+  while IFS=$'\t' read -r verdict branch wt_path ev_pr ev_ahead ev_tree ev_remote; do
     if [[ "$verdict" == "safe" ]]; then
       icon="${c_green}${safe_char}${c_reset}"
     else
       icon="${c_yellow}${warn_char}${c_reset}"
     fi
 
-    # Colorize individual evidence pieces
-    colored_evidence=""
-    pieces=("${(@s: · :)evidence}")
-    for p in "${pieces[@]}"; do
-      case "$p" in
-        PR\ *merged)       colored_p="${c_green}${p}${c_reset}" ;;
-        remote\ gone)      colored_p="${c_green}${p}${c_reset}" ;;
-        clean)             colored_p="${c_dim}${p}${c_reset}" ;;
-        *commit*ahead*)    colored_p="${c_yellow}${p}${c_reset}" ;;
-        uncommitted*)      colored_p="${c_red}${p}${c_reset}" ;;
-        *)                 colored_p="$p" ;;
-      esac
-      if [[ -n "$colored_evidence" ]]; then
-        colored_evidence="${colored_evidence} ${c_dim}${dot}${c_reset} ${colored_p}"
-      else
-        colored_evidence="$colored_p"
-      fi
-    done
+    disp="${icon} $(printf "${c_bold}%-${max_bw}s${c_reset}" "$branch")"
 
-    fzf_lines+=("$(printf "%s ${c_bold}%-${max_branch_width}s${c_reset}  %s\t%s" "$icon" "$branch" "$colored_evidence" "$wt_path")")
-  done
+    # PR merged (optional)
+    cell=""; [[ -n "$ev_pr" ]] && cell="${c_green}${ev_pr}${c_reset}"
+    pad=$(( max_pr - ${#ev_pr} )); (( pad < 0 )) && pad=0
+    disp+="  ${cell}$(printf '%*s' $pad '')"
 
-  # fzf multi-select
+    # commits ahead (optional)
+    cell=""; [[ -n "$ev_ahead" ]] && cell="${c_yellow}${ev_ahead}${c_reset}"
+    pad=$(( max_ah - ${#ev_ahead} )); (( pad < 0 )) && pad=0
+    disp+="  ${cell}$(printf '%*s' $pad '')"
+
+    # worktree clean / dirty
+    if [[ "$ev_tree" == clean ]]; then cell="${c_dim}${ev_tree}${c_reset}"
+    else cell="${c_red}${ev_tree}${c_reset}"; fi
+    pad=$(( max_tr - ${#ev_tree} )); (( pad < 0 )) && pad=0
+    disp+="  ${cell}$(printf '%*s' $pad '')"
+
+    # remote gone (optional, last)
+    cell=""; [[ -n "$ev_remote" ]] && cell="${c_green}${ev_remote}${c_reset}"
+    pad=$(( max_rm - ${#ev_remote} )); (( pad < 0 )) && pad=0
+    disp+="  ${cell}$(printf '%*s' $pad '')"
+
+    fzf_lines+=("${disp}"$'\t'"${branch}"$'\t'"${wt_path}")
+  done <<< "$raw"
+
+  # --- fzf (output to tmpfile, not $()) ---
+  local hdr
+  hdr=$(printf "  %-${max_bw}s  %-${max_pr}s  %-${max_ah}s  %-${max_tr}s  %-${max_rm}s  │ tab:select · enter:delete · esc:cancel" "branch" "PR merged" "ahead" "tree" "remote")
+
+  local fzf_out
+  fzf_out=$(mktemp "${TMPDIR:-/tmp}/wt-clean.XXXXXX") || return
+  printf '%s\n' "${fzf_lines[@]}" | fzf --multi --ansi --height=40% \
+    --delimiter='\t' --with-nth=1 --header="$hdr" >"$fzf_out"
+
+  [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return }
+
   local selected
-  selected=$(printf '%s\n' "${fzf_lines[@]}" | fzf --multi --ansi --height=40% \
-    --delimiter='\t' --with-nth=1 \
-    --header="tab:select | enter:delete selected | esc:cancel")
-
+  selected=$(<"$fzf_out")
+  rm -f "$fzf_out"
   [[ -n "$selected" ]] || return
 
-  # Extract paths and branch names from selection
   local -a paths branches
-  local abs_path branch_name
+  local abs_path branch_name line
   while IFS= read -r line; do
-    abs_path=$(echo "$line" | awk -F'\t' '{print $2}')
-    branch_name=$(echo "$line" | awk '{print $2}')
+    branch_name="${line#*$'\t'}"
+    branch_name="${branch_name%%$'\t'*}"
+    abs_path="${line##*$'\t'}"
     paths+=("$abs_path")
     branches+=("$branch_name")
   done <<< "$selected"
 
-  # Confirmation
   local branch_msg=""
   if ! $keep_branches; then
     branch_msg=" (and local branches)"
   fi
   echo "Will delete ${#paths[@]} worktree(s)${branch_msg}:"
-  for b in "${branches[@]}"; do
-    echo "  - $b"
-  done
+  for b in "${branches[@]}"; do echo "  - $b"; done
   echo
   printf "Proceed? [y/N] "
   read -q || { echo; return 1; }
   echo
 
-  # Batch delete
+  local main_wt
+  main_wt=$(wt-core main-worktree)
   local wt_path branch
   for i in {1..${#paths[@]}}; do
     wt_path="${paths[$i]}"
     branch="${branches[$i]}"
 
-    if [[ "$PWD" == "$wt_path"* ]]; then
-      cd "$main_wt"
-    fi
+    [[ "$PWD" == "$wt_path"* ]] && cd "$main_wt"
 
-    if git worktree remove "$wt_path" 2>/dev/null; then
+    if wt-core delete "$wt_path" 2>/dev/null; then
       echo "Removed worktree: $branch"
       if ! $keep_branches; then
         git branch -D "$branch" 2>/dev/null && echo "Deleted branch: $branch"
@@ -328,23 +156,22 @@ _wt_clean() {
   done
 }
 
-# Create a new worktree as a sibling directory of the main worktree.
-# If a local branch with the given name exists, it's checked out;
-# otherwise a new branch is created.
+# ---------------------------------------------------------------------------
+# wt add / wt delete
+# ---------------------------------------------------------------------------
 _wt_add() {
+  { set +x } 2>/dev/null
+  emulate -LR zsh
+
   if [[ -z "$1" ]]; then
     echo "Usage: wt add <branch-name>" >&2
     return 1
   fi
-  local name="$1"
-  local main_wt="$(_wt_main_worktree)"
-  local target="$(dirname "$main_wt")/$name"
 
-  # Use existing branch if it exists, otherwise create a new one with -b
-  if git show-ref --verify --quiet "refs/heads/$name" 2>/dev/null; then
-    git worktree add "$target" "$name" || return 1
-  else
-    git worktree add -b "$name" "$target" || return 1
+  local target
+  target=$(wt-core add "$1")
+  if [[ $? -ne 0 ]]; then
+    return 1
   fi
 
   cd "$target"
@@ -357,10 +184,10 @@ _wt_add() {
   fi
 }
 
-# Remove a worktree by absolute path, with a confirmation prompt.
-# Safely handles the case where the user is cd'd into the worktree
-# being deleted by moving them to the main worktree first.
 _wt_delete() {
+  { set +x } 2>/dev/null
+  emulate -LR zsh
+
   local wt_path="$1"
   local name="$(basename "$wt_path")"
 
@@ -368,21 +195,30 @@ _wt_delete() {
   read -q || { echo; return 1; }
   echo
 
-  # Can't remove a worktree while we're inside it
-  if [[ "$PWD" == "$wt_path"* ]]; then
-    cd "$(_wt_main_worktree)"
-  fi
+  [[ "$PWD" == "$wt_path"* ]] && cd "$(wt-core main-worktree)"
 
-  git worktree remove "$wt_path"
+  wt-core delete "$wt_path"
 }
 
+# ---------------------------------------------------------------------------
+# wt (main entrypoint)
+# ---------------------------------------------------------------------------
 wt() {
-  if ! git rev-parse --git-dir &>/dev/null; then
-    echo "Not a git repository" >&2
-    return 1
-  fi
+  { set +x } 2>/dev/null
+  emulate -LR zsh
 
-  # --- Subcommand dispatch ---
+  if [[ "$1" == "--version" || "$1" == "-v" || "$1" == "-V" ]]; then
+    if ! wt-core --version 2>/dev/null; then
+      echo "git-worktree-switcher: wt-core on PATH is too old (no --version). Reinstall from your clone:" >&2
+      if [[ -d "${_wt_plugin_dir}/rust" ]]; then
+        echo "  cd ${_wt_plugin_dir}/rust && cargo install --path . --force" >&2
+      else
+        echo "  cd rust && cargo install --path . --force" >&2
+      fi
+      return 1
+    fi
+    return
+  fi
 
   if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     cat <<'EOF'
@@ -390,9 +226,8 @@ Usage: wt [command] [args]
 
 Commands:
   wt                Open fzf worktree picker
-  wt <path>         Switch to worktree at path
   wt add <branch>   Create new worktree (and branch if needed)
-  wt clean            Review and batch-delete stale worktrees
+  wt clean          Review and batch-delete stale worktrees
 
 fzf keybindings:
   enter    Switch to selected worktree
@@ -404,6 +239,13 @@ EOF
     return
   fi
 
+  if ! git rev-parse --git-dir &>/dev/null; then
+    echo "Not a git repository" >&2
+    return 1
+  fi
+
+  # --- Subcommand dispatch ---
+
   if [[ "$1" == "clean" ]]; then
     _wt_clean "${@:2}"
     return
@@ -414,26 +256,9 @@ EOF
     return
   fi
 
-  # Direct path: `wt some/path` cds straight there
   if [[ -n "$1" ]]; then
-    local main_wt="$(_wt_main_worktree)"
-    local target
-    if [[ "$1" == "." ]]; then
-      target="$main_wt"
-    elif [[ -d "$1" ]]; then
-      target="$1"
-    else
-      target="$main_wt/$1"
-    fi
-    cd "$target" || return 1
-
-    printf "Open in %s? [Y/n] " "$WT_OPENER"
-    local open_yn
-    read -r open_yn
-    if [[ "$open_yn" != [nN]* ]]; then
-      ${(z)WT_OPENER} "$target"
-    fi
-    return
+    echo "wt: unknown command '$1'. Run wt for the picker, or wt --help." >&2
+    return 1
   fi
 
   # --- Interactive fzf picker ---
@@ -441,43 +266,47 @@ EOF
   local folder=$'\uf07c'       # nerd font folder icon
   local branch_icon=$'\ue725'  # nerd font branch icon
 
-  local raw=$(_wt_entries)
+  local raw ec=""
+  raw=$(wt-core picker 2>&1) || ec=$?
+  if [[ -n "$ec" || "$raw" == *"unrecognized subcommand"* ]]; then
+    echo "git-worktree-switcher: wt-core on PATH is too old (missing \"picker\"). Reinstall from your clone:" >&2
+    if [[ -d "${_wt_plugin_dir}/rust" ]]; then
+      echo "  cd ${_wt_plugin_dir}/rust && cargo install --path . --force" >&2
+    else
+      echo "  cd rust && cargo install --path . --force" >&2
+    fi
+    [[ "$raw" != *"unrecognized subcommand"* && -n "$raw" ]] && echo "$raw" >&2
+    return 1
+  fi
   [[ -z "$raw" ]] && return
 
-  # Find max branch width for column alignment
-  local max_width=0
-  while IFS=$'\t' read -r branch _ _; do
-    (( ${#branch} > max_width )) && max_width=${#branch}
-  done <<< "$raw"
-
-  # Format entries as "icon branch  icon path\tabs_path" for fzf.
-  # --with-nth=1 shows only the display portion (before \t).
-  # --expect makes fzf output the pressed key on line 1, selection on line 2.
   local safe_icon=$'\u2713'
   local warn_icon=$'\u26a0'
-  local main_abs default_branch
-  main_abs=$(_wt_main_worktree)
-  default_branch=$(_wt_default_branch)
+  local main_abs=""
+  local -a fzf_lines
 
-  local status_icon status
-  local result=$(while IFS=$'\t' read -r branch rel abs <&3; do
-    status_icon=""
-    if [[ "$branch" != "(detached)" && "$abs" != "$main_abs" ]]; then
-      status=$(_wt_quick_status "$branch" "$abs" "$default_branch")
-      [[ "$status" == "safe" ]] && status_icon=" $safe_icon"
-      [[ "$status" == "warn" ]] && status_icon=" $warn_icon"
-    fi
-    printf "%s %-${max_width}s%s  %s %s\t%s\n" \
-      "$branch_icon" "$branch" "$status_icon" "$folder" "$rel" "$abs"
-  done 3<<< "$raw" | fzf --height=40% --delimiter='\t' --with-nth=1 \
+  while IFS=$'\t' read -r branch rel abs stale; do
+    [[ "$rel" == "." ]] && main_abs="$abs"
+    local path_display="$rel"
+    [[ "$rel" == "." ]] && path_display="${main_abs:t}"
+    local status_icon=""
+    [[ "$stale" == "safe" ]] && status_icon=" $safe_icon"
+    [[ "$stale" == "warn" ]] && status_icon=" $warn_icon"
+    fzf_lines+=("$(printf "%s %s  %s %s%s\t%s" \
+      "$folder" "$path_display" "$branch_icon" "$branch" "$status_icon" "$abs")")
+  done <<< "$raw"
+
+  local fzf_out
+  fzf_out=$(mktemp "${TMPDIR:-/tmp}/wt-fzf.XXXXXX") || return
+  printf '%s\n' "${fzf_lines[@]}" | fzf --height=40% --delimiter='\t' --with-nth=1 \
     --header="enter:switch │ ctrl-a:add │ ctrl-o:open │ ctrl-x:delete │ ctrl-g:clean" \
-    --expect=ctrl-o,ctrl-x,ctrl-a,ctrl-g)
+    --expect=ctrl-o,ctrl-x,ctrl-a,ctrl-g >"$fzf_out"
 
-  [[ -n "$result" ]] || return
+  [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return }
 
-  # --expect changes fzf output: line 1 = key pressed (empty for enter), line 2 = selection
-  local key=$(head -1 <<< "$result")
-  local selection=$(tail -1 <<< "$result")
+  local key=$(head -1 "$fzf_out")
+  local selection=$(tail -1 "$fzf_out")
+  rm -f "$fzf_out"
   [[ -n "$selection" ]] || return
 
   local abs_path=$(echo "$selection" | awk -F'\t' '{print $2}')
@@ -496,16 +325,19 @@ EOF
   esac
 }
 
-# --- Tab completion ---
-# `wt <tab>` shows subcommands + worktree paths
-# `wt add <tab>` shows local and remote branch names
+# ---------------------------------------------------------------------------
+# Tab completion
+# ---------------------------------------------------------------------------
 _wt() {
+  { set +x } 2>/dev/null
+  emulate -LR zsh
+
   local branch_icon=$'\ue725'
   local branch rel abs
 
   if [[ "$words[2]" == "add" ]]; then
     local -a branches
-    branches=(${(f)"$(git branch -a --format='%(refname:short)' 2>/dev/null)"})
+    branches=(${(f)"$(wt-core completions 2>/dev/null)"})
     _describe 'branch' branches
     return
   fi
@@ -514,8 +346,10 @@ _wt() {
   subcmds=("add:Create a new worktree" "clean:Review and delete stale worktrees")
   while IFS=$'\t' read -r branch rel abs; do
     wt_descs+=("${rel//:/\\:}:$branch_icon $branch")
-  done < <(_wt_entries)
+  done < <(wt-core entries 2>/dev/null)
   _describe 'subcommand' subcmds -V subcommands
   _describe 'worktree' wt_descs -V worktrees
 }
 compdef _wt wt
+
+} # end anonymous function

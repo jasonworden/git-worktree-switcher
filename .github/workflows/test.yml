@@ -7,7 +7,35 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  rust:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Build and test Rust binary
+        working-directory: rust
+        run: |
+          cargo build
+          cargo test
+
+  shell:
+    needs: rust
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -20,10 +48,26 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zsh
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Build wt-core binary
+        working-directory: rust
+        run: cargo build
+
       - name: Install ShellSpec
         run: |
           git clone --depth 1 https://github.com/shellspec/shellspec.git /tmp/shellspec
           sudo ln -s /tmp/shellspec/shellspec /usr/local/bin/shellspec
 
-      - name: Run tests
+      - name: Run shell tests
         run: shellspec
