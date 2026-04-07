@@ -130,8 +130,7 @@ _wt_picker() {
   local local_cache=$(mktemp "${tmpdir}/wt-local.XXXXXX")
 
   # Headers per mode
-  local browse_hdr=$'\033[33m\u21bb Loading...\033[0m  /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open \u00b7 ctrl-p preview'
-  local browse_hdr_done=$'\033[32m\u2713 Ready\033[0m  /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open \u00b7 ctrl-p preview'
+  local browse_hdr='/uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open \u00b7 ctrl-p preview'
   local uproot_hdr=$'\033[31m\u26a0 UPROOT MODE\033[0m  tab select \u00b7 enter confirm \u00b7 esc browse'
   local plant_hdr="Select branch or [new branch] \u00b7 esc cancel"
 
@@ -171,7 +170,7 @@ _wt_picker() {
   # Slash command handler: detects /browse, /uproot, /plant typed in query
   local slash_cmd
   slash_cmd='case {q} in'
-  slash_cmd+=' /browse) echo "change-query()+reload('"$local_browse"')+change-header('"$browse_hdr_done"')+change-prompt(> )";; '
+  slash_cmd+=' /browse) echo "change-query()+reload('"$local_browse"')+change-header('"$browse_hdr"')+change-prompt(> )";; '
   slash_cmd+=' /uproot) echo "change-query()+reload('"$reload_uproot"')+change-header('"$uproot_hdr"')+change-prompt(uproot> )";; '
   slash_cmd+=' /plant) echo "become(echo __PLANT__)";; '
   slash_cmd+=' esac'
@@ -184,10 +183,6 @@ _wt_picker() {
   local fzf_port=$((10000 + RANDOM % 50000))
   local remote_cache=$(mktemp "${tmpdir}/wt-remote.XXXXXX")
 
-  # Write the fzf action to a file (avoids ANSI/special char issues in curl -d)
-  local action_file=$(mktemp "${tmpdir}/wt-action.XXXXXX")
-  printf '%s' "reload(cat ${remote_cache})+change-header(${browse_hdr_done})" > "$action_file"
-
   # Background: run the slow remote gather, write to file, then tell fzf
   # to reload from the file (cat is instant — no UI freeze).
   {
@@ -196,7 +191,7 @@ _wt_picker() {
     local i
     for i in 1 2 3; do
       curl -s -X POST "http://localhost:${fzf_port}" \
-        --data-binary "@${action_file}" \
+        -d "reload(cat ${remote_cache})" \
         2>/dev/null && break
       sleep 0.2
     done
@@ -213,17 +208,17 @@ _wt_picker() {
     --expect=ctrl-o,ctrl-x \
     --bind="ctrl-p:toggle-preview" \
     --bind="tab:toggle+down" \
-    --bind="alt-1:reload($local_browse)+change-header($browse_hdr_done)+change-prompt(> )" \
+    --bind="alt-1:reload($local_browse)+change-header($browse_hdr)+change-prompt(> )" \
     --bind="alt-2:reload($reload_uproot)+change-header($uproot_hdr)+change-prompt(uproot> )" \
     --bind="alt-3:become(echo __PLANT__)" \
     --bind="ctrl-]:become(echo __CYCLE__)" \
-    --bind="esc:reload($local_browse)+change-header($browse_hdr_done)+change-prompt(> )" \
+    --bind="esc:reload($local_browse)+change-header($browse_hdr)+change-prompt(> )" \
     --bind="change:transform:$slash_cmd" \
     "${extra_args[@]}" < "$local_cache" > "$fzf_out"
 
   # Clean up background process and temp files
   kill $bg_pid 2>/dev/null; wait $bg_pid 2>/dev/null
-  rm -f "$local_cache" "$remote_cache" "$action_file"
+  rm -f "$local_cache" "$remote_cache"
 
   [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return; }
 
