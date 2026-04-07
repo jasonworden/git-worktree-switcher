@@ -11,19 +11,23 @@ wt-dev() {
   local root
   if [[ -n "$1" ]]; then
     root="$1"
+  elif [[ -n "$_WT_DEV_ROOT" && -f "$_WT_DEV_ROOT/rust/src/main.rs" ]]; then
+    # Reuse last-known root (most common case: re-running after a code change)
+    root="$_WT_DEV_ROOT"
   else
+    # Auto-detect: only if we're currently inside the wt repo itself
     local git_root
     git_root=$(git rev-parse --show-toplevel 2>/dev/null)
     if [[ -n "$git_root" && -f "$git_root/rust/src/main.rs" ]]; then
       root="$git_root"
-    else
-      root="${_WT_PLUGIN_DIR:-$(cd "${0:A:h}" 2>/dev/null && pwd)}"
     fi
   fi
-  if [[ ! -f "$root/rust/src/main.rs" ]]; then
-    echo "Not a wt repo: $root" >&2
+  if [[ -z "$root" || ! -f "$root/rust/src/main.rs" ]]; then
+    echo "wt-dev: no wt repo found. Pass a path: wt-dev /path/to/git-worktree-switcher" >&2
     return 1
   fi
+  # Remember for next time
+  export _WT_DEV_ROOT="$root"
   local branch
   branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
   echo "wt-dev: $root (branch: $branch)"
