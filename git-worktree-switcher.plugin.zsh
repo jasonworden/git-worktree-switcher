@@ -34,7 +34,6 @@ _wt_run_hook() {
   hook_cmd=$(git config --get "wt.hook.${hook_name}" 2>/dev/null)
 
   if [[ -z "$hook_cmd" ]]; then
-    # Fall back to .wt/hooks/<hook_name>.sh
     local hook_file
     if [[ -n "$main_wt" ]]; then
       hook_file="${main_wt}/.wt/hooks/${hook_name}.sh"
@@ -59,102 +58,6 @@ _wt_run_hook() {
 }
 
 # ---------------------------------------------------------------------------
-# Format TSV into fzf display lines
-# ---------------------------------------------------------------------------
-_wt_format_browse() {
-  { set +x } 2>/dev/null
-  emulate -LR zsh
-  local raw="$1"
-  local c_green=$'\033[32m' c_yellow=$'\033[33m' c_red=$'\033[31m'
-  local c_dim=$'\033[2m' c_bold=$'\033[1m' c_reset=$'\033[0m'
-  local c_cyan=$'\033[36m'
-
-  local branch rel abs tree ahead remote pr verdict is_main
-  while IFS=$'\t' read -r branch rel abs tree ahead remote pr verdict is_main; do
-    local indicator=" "
-    [[ "$is_main" == "true" ]] && indicator="${c_green}\u25cf${c_reset}"
-
-    local branch_col
-    if [[ "$is_main" == "true" ]]; then
-      branch_col="${c_green}${branch}${c_reset}"
-    else
-      branch_col="${c_cyan}${branch}${c_reset}"
-    fi
-
-    local tree_col
-    if [[ "$tree" == "clean" ]]; then
-      tree_col="${c_green}clean${c_reset}"
-    else
-      tree_col="${c_red}dirty${c_reset}"
-    fi
-
-    local ahead_col
-    if [[ "$ahead" == $'\u2014' || "$ahead" == "—" ]]; then
-      ahead_col="${c_dim}\u2014${c_reset}"
-    else
-      ahead_col="${c_yellow}${ahead}${c_reset}"
-    fi
-
-    local remote_col
-    case "$remote" in
-      *gone*)    remote_col="${c_red}gone${c_reset}" ;;
-      *origin*)  remote_col="${c_green}origin \u2713${c_reset}" ;;
-      "··")      remote_col="${c_dim}\u00b7\u00b7${c_reset}" ;;
-      *)         remote_col="${c_dim}\u2014${c_reset}" ;;
-    esac
-
-    local pr_col
-    case "$pr" in
-      *merged*)  pr_col="${c_green}${pr}${c_reset}" ;;
-      "··")      pr_col="${c_dim}\u00b7\u00b7${c_reset}" ;;
-      *)         pr_col="${c_dim}${pr}${c_reset}" ;;
-    esac
-
-    printf "%s %-20s %-24s %-7s %-7s %-12s %s\t%s\n" \
-      "$indicator" "$branch_col" "${c_dim}${rel}${c_reset}" \
-      "$tree_col" "$ahead_col" "$remote_col" "$pr_col" "$abs"
-  done <<< "$raw"
-}
-
-_wt_format_uproot() {
-  { set +x } 2>/dev/null
-  emulate -LR zsh
-  local raw="$1"
-  local c_green=$'\033[32m' c_yellow=$'\033[33m' c_red=$'\033[31m'
-  local c_dim=$'\033[2m' c_bold=$'\033[1m' c_reset=$'\033[0m'
-  local c_cyan=$'\033[36m'
-
-  local branch rel abs tree ahead remote pr verdict is_main
-  while IFS=$'\t' read -r branch rel abs tree ahead remote pr verdict is_main; do
-    local indicator=" "
-    local verdict_col
-
-    if [[ "$is_main" == "true" ]]; then
-      # Grayed out, not selectable
-      printf "${c_dim}  %-20s %-24s %-7s %-7s %-12s %-14s pinned${c_reset}\t%s\n" \
-        "$branch" "$rel" "$tree" "$ahead" "$remote" "$pr" "$abs"
-      continue
-    fi
-
-    case "$verdict" in
-      safe)    verdict_col="${c_green}safe \u2713${c_reset}" ;;
-      keep)    verdict_col="${c_yellow}keep${c_reset}" ;;
-      unsafe)  verdict_col="${c_red}unsafe${c_reset}" ;;
-      pending) verdict_col="${c_dim}...${c_reset}" ;;
-      *)       verdict_col="${c_dim}${verdict}${c_reset}" ;;
-    esac
-
-    printf "  %-20s %-24s %-7s %-7s %-12s %-14s %s\t%s\n" \
-      "${c_cyan}${branch}${c_reset}" "${c_dim}${rel}${c_reset}" \
-      "$(if [[ $tree == clean ]]; then echo "${c_green}clean${c_reset}"; else echo "${c_red}dirty${c_reset}"; fi)" \
-      "$(if [[ "$ahead" == $'\u2014' || "$ahead" == "—" ]]; then echo "${c_dim}\u2014${c_reset}"; else echo "${c_yellow}${ahead}${c_reset}"; fi)" \
-      "$(case $remote in *gone*) echo "${c_red}gone${c_reset}";; *origin*) echo "${c_green}origin \u2713${c_reset}";; "··") echo "${c_dim}\u00b7\u00b7${c_reset}";; *) echo "${c_dim}\u2014${c_reset}";; esac)" \
-      "$(case $pr in *merged*) echo "${c_green}${pr}${c_reset}";; "··") echo "${c_dim}\u00b7\u00b7${c_reset}";; *) echo "${c_dim}${pr}${c_reset}";; esac)" \
-      "$verdict_col" "$abs"
-  done <<< "$raw"
-}
-
-# ---------------------------------------------------------------------------
 # wt (main entrypoint)
 # ---------------------------------------------------------------------------
 wt() {
@@ -163,8 +66,7 @@ wt() {
 
   if [[ "$1" == "--version" || "$1" == "-v" || "$1" == "-V" ]]; then
     wt-core --version 2>/dev/null || {
-      echo "git-worktree-switcher: wt-core too old. Reinstall from your clone." >&2
-      return 1
+      echo "git-worktree-switcher: wt-core too old. Reinstall." >&2; return 1
     }
     return
   fi
@@ -187,7 +89,7 @@ Modes (switch within picker):
   esc                         Back to browse
 
 Browse keybindings:
-  enter    Switch to selected worktree (or open selected in editor)
+  enter    Switch to selected worktree
   tab      Toggle multi-select
   ctrl-o   Open in editor ($WT_OPENER)
   ctrl-x   Delete worktree (with confirmation)
@@ -202,12 +104,11 @@ EOF
 
   # --- Subcommand dispatch ---
   local initial_mode="browse"
-
   case "$1" in
     uproot|clean) initial_mode="uproot"; shift ;;
     plant)        initial_mode="plant"; shift ;;
     add)          _wt_add "${@:2}"; return ;;
-    "")           ;; # default browse
+    "")           ;;
     *)            echo "wt: unknown command '$1'. Run wt --help." >&2; return 1 ;;
   esac
 
@@ -221,164 +122,93 @@ _wt_picker() {
   { set +x } 2>/dev/null
   emulate -LR zsh
   local initial_mode="${1:-browse}"
-  local keep_branches_flag="$2"
 
-  # Get initial local data
-  local raw_local
-  raw_local=$(wt-core unified --local 2>/dev/null)
-  [[ -z "$raw_local" ]] && return
+  # Verify data exists
+  local check
+  check=$(wt-core unified --local 2>/dev/null)
+  [[ -z "$check" ]] && return
 
-  # Check fzf version for --listen support
-  local fzf_version
-  fzf_version=$(fzf --version 2>/dev/null | head -1 | sed 's/[^0-9.].*//; s/\..*//')
-  local fzf_minor
-  fzf_minor=$(fzf --version 2>/dev/null | head -1 | sed 's/[^0-9.].*//; s/^[0-9]*\.//; s/\..*//')
-
-  local has_listen=false
-  if (( fzf_version > 0 )) || (( fzf_version == 0 && fzf_minor >= 30 )); then
-    has_listen=true
-  fi
-
-  # Temp files for data exchange
+  # Temp files
   local tmpdir="${TMPDIR:-/tmp}"
-  local data_file=$(mktemp "${tmpdir}/wt-data.XXXXXX")
-  local remote_file=$(mktemp "${tmpdir}/wt-remote.XXXXXX")
   local fzf_out=$(mktemp "${tmpdir}/wt-fzf.XXXXXX")
   local mode_file=$(mktemp "${tmpdir}/wt-mode.XXXXXX")
   echo "$initial_mode" > "$mode_file"
 
-  # Format initial data based on mode
-  local formatted
-  if [[ "$initial_mode" == "uproot" ]]; then
-    formatted=$(_wt_format_uproot "$raw_local")
-  elif [[ "$initial_mode" == "plant" ]]; then
-    formatted=$(wt-core unified --branches 2>/dev/null)
-  else
-    formatted=$(_wt_format_browse "$raw_local")
-  fi
+  # Headers per mode
+  local browse_hdr=$'\033[33m\u21bb Loading...\033[0m  /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open'
+  local browse_hdr_done=$'\033[32m\u2713 Ready\033[0m  /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open'
+  local uproot_hdr=$'\033[31m\u26a0 UPROOT MODE\033[0m  tab select \u00b7 enter confirm \u00b7 esc browse'
+  local plant_hdr="Select branch or [new branch] \u00b7 esc cancel"
 
-  # Find a free port for fzf --listen
-  local listen_port=""
-  local listen_arg=""
-  if $has_listen; then
-    listen_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || echo "")
-    if [[ -n "$listen_port" ]]; then
-      listen_arg="--listen=localhost:${listen_port}"
-    fi
-  fi
-
-  # Background: fetch remote data and reload fzf
-  local remote_pid=""
-  if [[ -n "$listen_port" && "$initial_mode" != "plant" ]]; then
-    (
-      wt-core unified --remote 2>/dev/null > "$remote_file"
-      if [[ -s "$remote_file" ]]; then
-        local current_mode
-        current_mode=$(<"$mode_file")
-        local new_formatted
-        if [[ "$current_mode" == "uproot" ]]; then
-          new_formatted=$(_wt_format_uproot "$(<"$remote_file")")
-        else
-          new_formatted=$(_wt_format_browse "$(<"$remote_file")")
-        fi
-        # URL-encode the reload data
-        local encoded
-        encoded=$(printf '%s\n' "$new_formatted" | sed 's/%/%25/g; s/ /%20/g; s/\t/%09/g')
-        # Use fzf's reload action via HTTP
-        curl -s "localhost:${listen_port}" -d "reload(wt-core unified --remote 2>/dev/null | _wt_format_for_mode)" &>/dev/null 2>&1 || true
-      fi
-    ) &
-    remote_pid=$!
-  fi
-
-  # Determine initial header and prompt
-  local header prompt
-  case "$initial_mode" in
-    browse)
-      header=$'\033[33m\u21bb Fetching remote info...\033[0m     /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open'
-      prompt="> "
-      ;;
-    uproot)
-      header=$'\033[31m\u26a0 UPROOT MODE\033[0m  tab select \u00b7 enter confirm \u00b7 esc browse'
-      prompt="uproot> "
-      ;;
-    plant)
-      header="Select branch or [new branch]  \u00b7 esc browse"
-      prompt="plant> "
-      ;;
-  esac
-
-  # Preview command
+  # Preview command (uses abs path from last tab-delimited field)
   local preview_cmd='wt-core unified --preview {-1} 2>/dev/null'
 
-  # Build fzf arguments
-  local -a fzf_args=(
-    --ansi
-    --height=60%
-    --delimiter=$'\t'
-    --with-nth=1
-    --header="$header"
-    --prompt="$prompt"
-    --preview="$preview_cmd"
-    --preview-window=right:40%:wrap
-    --expect=ctrl-o,ctrl-x
-    --bind="tab:toggle+down"
-  )
-
-  if [[ -n "$listen_arg" ]]; then
-    fzf_args+=("$listen_arg")
-  fi
-
-  if [[ "$initial_mode" == "uproot" ]]; then
-    fzf_args+=(--multi)
-  elif [[ "$initial_mode" == "plant" ]]; then
-    # Plant mode: no preview, simple list
-    fzf_args=(
-      --ansi
-      --height=40%
-      --header="$header"
-      --prompt="$prompt"
-    )
-  fi
-
-  # Run fzf
-  printf '%s\n' "${(@f)formatted}" | fzf "${fzf_args[@]}" > "$fzf_out"
-
-  # Kill background fetch if still running
-  [[ -n "$remote_pid" ]] && kill "$remote_pid" 2>/dev/null; wait "$remote_pid" 2>/dev/null
-
-  # Process results
-  [[ -s "$fzf_out" ]] || {
-    rm -f "$data_file" "$remote_file" "$fzf_out" "$mode_file"
-    return
-  }
-
-  local key selection abs_path
-  key=$(head -1 "$fzf_out")
-
   if [[ "$initial_mode" == "plant" ]]; then
-    # Plant mode: selection is the branch name
-    selection=$(tail -1 "$fzf_out")
-    rm -f "$data_file" "$remote_file" "$fzf_out" "$mode_file"
+    # Plant mode: simple branch picker
+    wt-core unified --branches 2>/dev/null | \
+      fzf --ansi --height=40% --header="$plant_hdr" --prompt="plant> " > "$fzf_out"
+
+    [[ -s "$fzf_out" ]] || { rm -f "$fzf_out" "$mode_file"; return; }
+    local selection=$(<"$fzf_out")
+    rm -f "$fzf_out" "$mode_file"
     _wt_handle_plant "$selection"
     return
   fi
 
+  # Browse or Uproot mode — use fzf with reload for progressive loading
+  local format_flag="browse"
+  local prompt_str="> "
+  local header="$browse_hdr"
+  local -a extra_args=()
+
   if [[ "$initial_mode" == "uproot" ]]; then
-    # Uproot mode: multi-selection
+    format_flag="uproot"
+    prompt_str="uproot> "
+    header="$uproot_hdr"
+    extra_args+=(--multi)
+  fi
+
+  # The key trick: fzf starts with --local data, then a bind triggers --remote reload.
+  # We use 'start' binding (fzf 0.44+) or 'load' binding to trigger the background reload.
+  # For broader compat, we use become/execute-silent + reload pattern.
+
+  local reload_cmd="wt-core unified --remote --format=${format_flag} 2>/dev/null"
+  local local_cmd="wt-core unified --local --format=${format_flag} 2>/dev/null"
+
+  wt-core unified --local --format="$format_flag" 2>/dev/null | \
+    fzf --ansi --height=60% \
+      --delimiter=$'\t' --with-nth=1 \
+      --header="$header" \
+      --prompt="$prompt_str" \
+      --preview="$preview_cmd" \
+      --preview-window=right:40%:wrap \
+      --expect=ctrl-o,ctrl-x \
+      --bind="tab:toggle+down" \
+      --bind="load:reload-sync($reload_cmd)+change-header($browse_hdr_done)" \
+      --bind="alt-1:reload($local_cmd)+change-header($browse_hdr_done)+change-prompt(> )" \
+      --bind="alt-2:reload(wt-core unified --remote --format=uproot 2>/dev/null)+change-header($uproot_hdr)+change-prompt(uproot> )" \
+      --bind="alt-3:abort" \
+      --bind="esc:reload($local_cmd)+change-header($browse_hdr_done)+change-prompt(> )" \
+      "${extra_args[@]}" > "$fzf_out"
+
+  [[ -s "$fzf_out" ]] || { rm -f "$fzf_out" "$mode_file"; return; }
+
+  local key=$(head -1 "$fzf_out")
+
+  if [[ "$initial_mode" == "uproot" || "$prompt_str" == "uproot> " ]]; then
     local -a selected_lines
     selected_lines=("${(@f)$(tail -n +2 "$fzf_out")}")
-    rm -f "$data_file" "$remote_file" "$fzf_out" "$mode_file"
+    rm -f "$fzf_out" "$mode_file"
     _wt_handle_uproot "${selected_lines[@]}"
     return
   fi
 
-  # Browse mode
-  selection=$(tail -1 "$fzf_out")
-  rm -f "$data_file" "$remote_file" "$fzf_out" "$mode_file"
+  # Browse mode result
+  local selection=$(tail -1 "$fzf_out")
+  rm -f "$fzf_out" "$mode_file"
   [[ -n "$selection" ]] || return
 
-  abs_path=$(echo "$selection" | awk -F'\t' '{print $NF}')
+  local abs_path=$(echo "$selection" | awk -F'\t' '{print $NF}')
   [[ -n "$abs_path" ]] || return
 
   case "$key" in
@@ -386,7 +216,6 @@ _wt_picker() {
     ctrl-x) _wt_delete "$abs_path" ;;
     *)
       cd "$abs_path"
-      # Run post-enter hook
       local branch
       branch=$(git -C "$abs_path" rev-parse --abbrev-ref HEAD 2>/dev/null)
       _wt_run_hook "post-enter" "$abs_path" "${branch:-unknown}" "false"
@@ -408,10 +237,9 @@ _wt_handle_plant() {
     read -r branch_name
     [[ -n "$branch_name" ]] || return
 
-    # Branch prefix enforcement (opinionated mode)
-    local opinionated
-    opinionated=$(git config --get wt.opinionated.branchPrefix 2>/dev/null)
-    if [[ "$opinionated" == "true" ]]; then
+    local enforce_prefix
+    enforce_prefix=$(git config --get wt.opinionated.branchPrefix 2>/dev/null)
+    if [[ "$enforce_prefix" == "true" ]]; then
       if [[ "$branch_name" != feat/* && "$branch_name" != fix/* && "$branch_name" != chore/* ]]; then
         echo "Opinionated mode: branch must start with feat/, fix/, or chore/"
         printf "Branch name: "
@@ -426,16 +254,13 @@ _wt_handle_plant() {
   local target
   target=$(wt-core add "$selection" 2>&1)
   if [[ $? -ne 0 ]]; then
-    echo "Failed to create worktree: $target" >&2
+    echo "Failed: $target" >&2
     return 1
   fi
 
   echo "Created worktree: $selection -> $target"
-
-  # Run post-plant hook
   _wt_run_hook "post-plant" "$target" "$selection" "true"
 
-  # Auto-cd (check config)
   local auto_cd
   auto_cd=$(git config --get wt.opinionated.autoCd 2>/dev/null)
   if [[ "$auto_cd" == "true" ]]; then
@@ -444,9 +269,7 @@ _wt_handle_plant() {
     printf "cd into %s? [Y/n] " "$target"
     local yn
     read -r yn
-    if [[ "$yn" != [nN]* ]]; then
-      cd "$target"
-    fi
+    [[ "$yn" != [nN]* ]] && cd "$target"
   fi
 }
 
@@ -457,28 +280,25 @@ _wt_handle_uproot() {
   { set +x } 2>/dev/null
   emulate -LR zsh
   local -a lines=("$@")
-
   [[ ${#lines[@]} -gt 0 ]] || return
 
   local keep_branches=false
-  if [[ "${WT_CLEAN_KEEP_BRANCHES:-0}" == "1" ]]; then
-    keep_branches=true
-  fi
+  [[ "${WT_CLEAN_KEEP_BRANCHES:-0}" == "1" ]] && keep_branches=true
 
   local delete_branch
   delete_branch=$(git config --get wt.opinionated.deleteBranch 2>/dev/null)
-  if [[ "$delete_branch" == "true" ]]; then
-    keep_branches=false
-  fi
+  [[ "$delete_branch" == "true" ]] && keep_branches=false
 
   local -a paths branches
   local line abs_path branch_name
   for line in "${lines[@]}"; do
     [[ -n "$line" ]] || continue
     abs_path=$(echo "$line" | awk -F'\t' '{print $NF}')
-    # Extract branch from the formatted line (first non-space word)
-    branch_name=$(echo "$line" | sed 's/^[[:space:]]*//' | awk '{print $1}' | sed $'s/\033\\[[0-9;]*m//g')
+    # Extract branch: strip ANSI, trim leading spaces, take first word
+    branch_name=$(echo "$line" | sed $'s/\033\\[[0-9;]*m//g' | sed 's/^[[:space:]]*//' | awk '{print $1}')
     [[ -n "$abs_path" && -n "$branch_name" ]] || continue
+    # Skip main worktree (pinned)
+    [[ "$branch_name" == "pinned" ]] && continue
     paths+=("$abs_path")
     branches+=("$branch_name")
   done
@@ -486,9 +306,7 @@ _wt_handle_uproot() {
   [[ ${#paths[@]} -gt 0 ]] || return
 
   local branch_msg=""
-  if ! $keep_branches; then
-    branch_msg=" (and local branches)"
-  fi
+  $keep_branches || branch_msg=" (and local branches)"
   echo "Will delete ${#paths[@]} worktree(s)${branch_msg}:"
   for b in "${branches[@]}"; do echo "  - $b"; done
   echo
@@ -512,55 +330,40 @@ _wt_handle_uproot() {
         git branch -D "$branch" 2>/dev/null && echo "Deleted branch: $branch"
       fi
     else
-      echo "Failed to remove worktree: $branch" >&2
+      echo "Failed to remove: $branch" >&2
     fi
   done
 }
 
 # ---------------------------------------------------------------------------
-# Legacy helpers (kept for backward compat)
+# Legacy helpers
 # ---------------------------------------------------------------------------
 _wt_add() {
   { set +x } 2>/dev/null
   emulate -LR zsh
-
-  if [[ -z "$1" ]]; then
-    echo "Usage: wt add <branch-name>" >&2
-    return 1
-  fi
+  [[ -z "$1" ]] && { echo "Usage: wt add <branch-name>" >&2; return 1; }
 
   local target
   target=$(wt-core add "$1")
-  if [[ $? -ne 0 ]]; then
-    return 1
-  fi
+  [[ $? -ne 0 ]] && return 1
 
-  # Run post-plant hook
   _wt_run_hook "post-plant" "$target" "$1" "true"
-
   cd "$target"
 
   printf "Open in %s? [Y/n] " "$WT_OPENER"
   local open_yn
   read -r open_yn
-  if [[ "$open_yn" != [nN]* ]]; then
-    ${(z)WT_OPENER} "$target"
-  fi
+  [[ "$open_yn" != [nN]* ]] && ${(z)WT_OPENER} "$target"
 }
 
 _wt_delete() {
   { set +x } 2>/dev/null
   emulate -LR zsh
-
   local wt_path="$1"
-  local name="$(basename "$wt_path")"
-
-  printf "Remove worktree '%s'? [y/N] " "$name"
+  printf "Remove worktree '%s'? [y/N] " "$(basename "$wt_path")"
   read -q || { echo; return 1; }
   echo
-
   [[ "$PWD" == "$wt_path"* ]] && cd "$(wt-core main-worktree)"
-
   wt-core delete "$wt_path"
 }
 
@@ -570,9 +373,7 @@ _wt_delete() {
 _wt() {
   { set +x } 2>/dev/null
   emulate -LR zsh
-
   local branch_icon=$'\ue725'
-  local branch rel abs
 
   if [[ "$words[2]" == "add" || "$words[2]" == "plant" ]]; then
     local -a branches
@@ -583,11 +384,12 @@ _wt() {
 
   local -a wt_descs subcmds
   subcmds=(
-    "add:Create a new worktree (legacy)"
     "plant:Create a new worktree"
     "uproot:Review and bulk-delete stale worktrees"
     "clean:Alias for uproot"
+    "add:Create a new worktree (legacy)"
   )
+  local branch rel abs
   while IFS=$'\t' read -r branch rel abs; do
     wt_descs+=("${rel//:/\\:}:$branch_icon $branch")
   done < <(wt-core entries 2>/dev/null)

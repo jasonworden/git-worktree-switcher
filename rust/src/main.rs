@@ -85,6 +85,10 @@ enum Commands {
         /// List available branches for plant mode
         #[arg(long)]
         branches: bool,
+
+        /// Output format: tsv (default), browse, uproot
+        #[arg(long, default_value = "tsv")]
+        format: String,
     },
 }
 
@@ -145,20 +149,20 @@ fn main() {
         }
 
         Commands::Unified {
-            local,
+            local: _,
             remote,
             preview,
             branches,
+            format,
         } => {
             if let Some(path) = preview {
                 unified::run_preview(&path);
             } else if branches {
                 unified::run_branches();
             } else if remote {
-                unified::run_remote();
+                unified::run_remote_formatted(&format);
             } else {
-                // Default to local
-                unified::run_local();
+                unified::run_local_formatted(&format);
             }
         }
     }

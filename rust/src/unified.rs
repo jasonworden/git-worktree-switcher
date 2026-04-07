@@ -2,74 +2,90 @@ use std::collections::HashMap;
 use std::process::Command;
 
 use crate::clean;
-use crate::config;
 use crate::entries;
 use crate::git;
 
-/// Output TSV: branch \t rel_path \t abs_path \t tree \t ahead \t remote \t pr \t verdict \t is_main
-/// In --local mode, remote/pr columns are "··" and verdict is "pending" or "pinned".
-pub fn run_local() {
+// ANSI color codes
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const RED: &str = "\x1b[31m";
+const CYAN: &str = "\x1b[36m";
+const DIM: &str = "\x1b[2m";
+const RESET: &str = "\x1b[0m";
+const BULLET: &str = "\u{25cf}"; // ●
+const CHECK: &str = "\u{2713}";  // ✓
+const MDASH: &str = "\u{2014}";  // —
+const DOTS: &str = "\u{b7}\u{b7}"; // ··
+
+/// Worktree row data (shared between local and remote).
+struct Row {
+    branch: String,
+    rel: String,
+    abs: String,
+    tree: String,
+    ahead: String,
+    remote: String,
+    pr: String,
+    verdict: String,
+    is_main: bool,
+}
+
+/// Gather local-only data (instant, no network).
+fn gather_local() -> Vec<Row> {
     let worktrees = git::list_worktrees();
     let main_path = worktrees.iter().find(|w| w.is_main).map(|w| w.path.clone());
     let default_branch = git::default_branch().unwrap_or_else(|| "main".to_string());
 
-    for wt in &worktrees {
-        let rel = entries::worktree_rel(wt, main_path.as_ref());
+    worktrees
+        .iter()
+        .map(|wt| {
+            let rel = entries::worktree_rel(wt, main_path.as_ref());
+            let dirty = git::has_changes(&wt.path);
+            let tree = if dirty { "dirty" } else { "clean" }.to_string();
 
-        let (tree, ahead) = if wt.is_main {
-            let dirty = git::has_changes(&wt.path);
-            let tree = if dirty { "dirty" } else { "clean" };
-            (tree.to_string(), "\u{2014}".to_string()) // em dash
-        } else {
-            let dirty = git::has_changes(&wt.path);
-            let tree = if dirty { "dirty" } else { "clean" };
-            let ahead_n = git::unique_commits(&wt.branch, &default_branch);
-            let ahead = if ahead_n > 0 {
-                ahead_n.to_string()
+            let ahead = if wt.is_main {
+                MDASH.to_string()
             } else {
-                "\u{2014}".to_string()
+                let n = git::unique_commits(&wt.branch, &default_branch);
+                if n > 0 { n.to_string() } else { MDASH.to_string() }
             };
-            (tree.to_string(), ahead)
-        };
 
-        let verdict = if wt.is_main { "pinned" } else { "pending" };
-
-        println!(
-            "{}\t{}\t{}\t{}\t{}\t\u{b7}\u{b7}\t\u{b7}\u{b7}\t{}\t{}",
-            wt.branch,
-            rel,
-            wt.path.display(),
-            tree,
-            ahead,
-            verdict,
-            wt.is_main,
-        );
-    }
+            Row {
+                branch: wt.branch.clone(),
+                rel,
+                abs: wt.path.to_string_lossy().to_string(),
+                tree,
+                ahead,
+                remote: DOTS.to_string(),
+                pr: DOTS.to_string(),
+                verdict: if wt.is_main { "pinned".to_string() } else { "pending".to_string() },
+                is_main: wt.is_main,
+            }
+        })
+        .collect()
 }
 
-/// Output TSV with all columns filled after fetch + GH API check.
-pub fn run_remote() {
+/// Gather remote-enriched data (fetch + GH API).
+fn gather_remote() -> Vec<Row> {
     // Background: git fetch --prune
     let mut fetch_child = Command::new("git")
         .args(["fetch", "--prune", "--quiet"])
         .spawn()
         .ok();
 
-    // Check if remote exists
     let has_remote = Command::new("git")
         .args(["remote", "get-url", "origin"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    // Foreground: fetch merged PRs if gh available
-    let merged_prs = if has_remote && git::gh_available() {
+    let gh_ok = has_remote && git::gh_available();
+    let merged_prs = if gh_ok {
         clean::fetch_merged_prs()
     } else {
         HashMap::new()
     };
 
-    // Wait for fetch to complete
     if let Some(ref mut child) = fetch_child {
         let _ = child.wait();
     }
@@ -78,77 +94,204 @@ pub fn run_remote() {
     let main_path = worktrees.iter().find(|w| w.is_main).map(|w| w.path.clone());
     let default_branch = git::default_branch().unwrap_or_else(|| "main".to_string());
 
-    for wt in &worktrees {
-        let rel = entries::worktree_rel(wt, main_path.as_ref());
-
-        if wt.is_main {
+    worktrees
+        .iter()
+        .map(|wt| {
+            let rel = entries::worktree_rel(wt, main_path.as_ref());
             let dirty = git::has_changes(&wt.path);
-            let tree = if dirty { "dirty" } else { "clean" };
-            println!(
-                "{}\t{}\t{}\t{}\t\u{2014}\t\u{2014}\t\u{2014}\tpinned\ttrue",
-                wt.branch,
+            let tree = if dirty { "dirty" } else { "clean" }.to_string();
+
+            if wt.is_main {
+                return Row {
+                    branch: wt.branch.clone(),
+                    rel,
+                    abs: wt.path.to_string_lossy().to_string(),
+                    tree,
+                    ahead: MDASH.to_string(),
+                    remote: MDASH.to_string(),
+                    pr: MDASH.to_string(),
+                    verdict: "pinned".to_string(),
+                    is_main: true,
+                };
+            }
+
+            let ahead_n = git::unique_commits(&wt.branch, &default_branch);
+            let ahead = if ahead_n > 0 { ahead_n.to_string() } else { MDASH.to_string() };
+
+            let remote_gone = has_remote && git::remote_branch_gone(&wt.branch);
+            let remote = if !has_remote {
+                "no remote".to_string()
+            } else if remote_gone {
+                "gone".to_string()
+            } else {
+                format!("origin {CHECK}")
+            };
+
+            let pr_merged = merged_prs.contains_key(&wt.branch);
+            let pr = if !has_remote {
+                MDASH.to_string()
+            } else if let Some(pr_num) = merged_prs.get(&wt.branch) {
+                format!("#{pr_num} merged")
+            } else if !gh_ok {
+                "no gh".to_string()
+            } else {
+                "no PR".to_string()
+            };
+
+            let has_gone_signal = remote_gone || pr_merged;
+            let has_concerns = ahead_n > 0 || dirty;
+            let verdict = match (has_concerns, has_gone_signal) {
+                (false, true) => "safe",
+                (true, true) => "keep",
+                (true, false) => "unsafe",
+                (false, false) => "keep",
+            };
+
+            Row {
+                branch: wt.branch.clone(),
                 rel,
-                wt.path.display(),
+                abs: wt.path.to_string_lossy().to_string(),
                 tree,
-            );
-            continue;
-        }
+                ahead,
+                remote,
+                pr,
+                verdict: verdict.to_string(),
+                is_main: false,
+            }
+        })
+        .collect()
+}
 
-        let dirty = git::has_changes(&wt.path);
-        let tree = if dirty { "dirty" } else { "clean" };
-        let ahead_n = git::unique_commits(&wt.branch, &default_branch);
-        let ahead = if ahead_n > 0 {
-            ahead_n.to_string()
-        } else {
-            "\u{2014}".to_string()
-        };
+/// Format a row for browse mode display (ANSI colored, tab-separated from abs path).
+fn format_browse(row: &Row) -> String {
+    let indicator = if row.is_main {
+        format!("{GREEN}{BULLET}{RESET}")
+    } else {
+        " ".to_string()
+    };
 
-        let remote = if !has_remote {
-            "no remote".to_string()
-        } else if git::remote_branch_gone(&wt.branch) {
-            "gone".to_string()
-        } else {
-            "origin \u{2713}".to_string()
-        };
+    let branch_col = if row.is_main {
+        format!("{GREEN}{}{RESET}", row.branch)
+    } else {
+        format!("{CYAN}{}{RESET}", row.branch)
+    };
 
-        let pr = if !has_remote {
-            "\u{2014}".to_string()
-        } else if let Some(pr_num) = merged_prs.get(&wt.branch) {
-            format!("#{pr_num} merged")
-        } else if !git::gh_available() {
-            "no gh".to_string()
-        } else {
-            "no PR".to_string()
-        };
+    let tree_col = if row.tree == "clean" {
+        format!("{GREEN}clean{RESET}")
+    } else {
+        format!("{RED}dirty{RESET}")
+    };
 
-        // Verdict logic
-        let remote_gone = !has_remote || git::remote_branch_gone(&wt.branch);
-        let pr_merged = merged_prs.contains_key(&wt.branch);
-        let has_gone_signal = remote_gone || pr_merged;
-        let has_concerns = ahead_n > 0 || dirty;
+    let ahead_col = if row.ahead == MDASH {
+        format!("{DIM}{MDASH}{RESET}")
+    } else {
+        format!("{YELLOW}{}{RESET}", row.ahead)
+    };
 
-        let verdict = if !has_concerns && has_gone_signal {
-            "safe"
-        } else if has_concerns && has_gone_signal {
-            "keep"
-        } else if has_concerns {
-            "unsafe"
-        } else {
-            "keep" // no signal either way, keep by default
-        };
+    let remote_col = match row.remote.as_str() {
+        s if s.contains("gone") => format!("{RED}gone{RESET}"),
+        s if s.contains("origin") => format!("{GREEN}origin {CHECK}{RESET}"),
+        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
+        _ => format!("{DIM}{}{RESET}", row.remote),
+    };
 
-        println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\tfalse",
-            wt.branch, rel, wt.path.display(), tree, ahead, remote, pr, verdict,
+    let pr_col = match row.pr.as_str() {
+        s if s.contains("merged") => format!("{GREEN}{}{RESET}", row.pr),
+        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
+        _ => format!("{DIM}{}{RESET}", row.pr),
+    };
+
+    format!(
+        "{} {:<20} {DIM}{:<24}{RESET} {:<7} {:<7} {:<12} {}\t{}",
+        indicator, branch_col, row.rel, tree_col, ahead_col, remote_col, pr_col, row.abs,
+    )
+}
+
+/// Format a row for uproot mode display (with verdict column).
+fn format_uproot(row: &Row) -> String {
+    if row.is_main {
+        return format!(
+            "{DIM}  {:<20} {:<24} {:<7} {:<7} {:<12} {:<14} pinned{RESET}\t{}",
+            row.branch, row.rel, row.tree, row.ahead, row.remote, row.pr, row.abs,
         );
+    }
+
+    let branch_col = format!("{CYAN}{}{RESET}", row.branch);
+    let tree_col = if row.tree == "clean" {
+        format!("{GREEN}clean{RESET}")
+    } else {
+        format!("{RED}dirty{RESET}")
+    };
+    let ahead_col = if row.ahead == MDASH {
+        format!("{DIM}{MDASH}{RESET}")
+    } else {
+        format!("{YELLOW}{}{RESET}", row.ahead)
+    };
+    let remote_col = match row.remote.as_str() {
+        s if s.contains("gone") => format!("{RED}gone{RESET}"),
+        s if s.contains("origin") => format!("{GREEN}origin {CHECK}{RESET}"),
+        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
+        _ => format!("{DIM}{}{RESET}", row.remote),
+    };
+    let pr_col = match row.pr.as_str() {
+        s if s.contains("merged") => format!("{GREEN}{}{RESET}", row.pr),
+        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
+        _ => format!("{DIM}{}{RESET}", row.pr),
+    };
+    let verdict_col = match row.verdict.as_str() {
+        "safe" => format!("{GREEN}safe {CHECK}{RESET}"),
+        "keep" => format!("{YELLOW}keep{RESET}"),
+        "unsafe" => format!("{RED}unsafe{RESET}"),
+        "pending" => format!("{DIM}...{RESET}"),
+        v => format!("{DIM}{v}{RESET}"),
+    };
+
+    format!(
+        "  {:<20} {DIM}{:<24}{RESET} {:<7} {:<7} {:<12} {:<14} {}\t{}",
+        branch_col, row.rel, tree_col, ahead_col, remote_col, pr_col, verdict_col, row.abs,
+    )
+}
+
+/// Public entry: --local with optional --format
+pub fn run_local_formatted(format: &str) {
+    let rows = gather_local();
+    output_rows(&rows, format);
+}
+
+/// Public entry: --remote with optional --format
+pub fn run_remote_formatted(format: &str) {
+    let rows = gather_remote();
+    output_rows(&rows, format);
+}
+
+/// Raw TSV output (no ANSI, for backward compat / scripting).
+pub fn run_local() {
+    run_local_formatted("tsv");
+}
+
+pub fn run_remote() {
+    run_remote_formatted("tsv");
+}
+
+fn output_rows(rows: &[Row], format: &str) {
+    for row in rows {
+        match format {
+            "browse" => println!("{}", format_browse(row)),
+            "uproot" => println!("{}", format_uproot(row)),
+            _ => {
+                // Raw TSV
+                println!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    row.branch, row.rel, row.abs, row.tree, row.ahead,
+                    row.remote, row.pr, row.verdict, row.is_main,
+                );
+            }
+        }
     }
 }
 
-/// Output preview info for a single worktree: recent commits, diff stat, stash count.
+/// Output preview info for a single worktree.
 pub fn run_preview(path: &str) {
-    let wt_path = std::path::Path::new(path);
-
-    // Branch name
     let branch = Command::new("git")
         .args(["-C", path, "rev-parse", "--abbrev-ref", "HEAD"])
         .output()
@@ -157,7 +300,6 @@ pub fn run_preview(path: &str) {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
-    // Last commit date
     let last_date = Command::new("git")
         .args(["-C", path, "log", "-1", "--format=%cr"])
         .output()
@@ -169,7 +311,6 @@ pub fn run_preview(path: &str) {
     println!("{branch}  last touched {last_date}");
     println!("{}", "\u{2500}".repeat(40));
 
-    // Recent commits
     let default_branch = git::default_branch().unwrap_or_else(|| "main".to_string());
     let range = format!("{default_branch}..{branch}");
     let commits = Command::new("git")
@@ -189,7 +330,6 @@ pub fn run_preview(path: &str) {
         println!("No unique commits");
     }
 
-    // Diff stat
     let diff_stat = Command::new("git")
         .args(["-C", path, "diff", "--stat", &default_branch])
         .output()
@@ -205,17 +345,12 @@ pub fn run_preview(path: &str) {
         }
     }
 
-    // Stash count
     let stash = Command::new("git")
         .args(["-C", path, "stash", "list"])
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .count()
-        })
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
         .unwrap_or(0);
 
     if stash > 0 {
@@ -228,7 +363,6 @@ pub fn run_branches() {
     let worktrees = git::list_worktrees();
     let wt_branches: Vec<&str> = worktrees.iter().map(|w| w.branch.as_str()).collect();
 
-    // Get remote branches
     let output = Command::new("git")
         .args(["branch", "-r", "--format=%(refname:short)"])
         .output();
@@ -236,10 +370,8 @@ pub fn run_branches() {
     if let Ok(o) = output {
         if o.status.success() {
             let stdout = String::from_utf8_lossy(&o.stdout);
-            // Print "[new branch]" as first option
             println!("[new branch]");
             for line in stdout.lines() {
-                // Strip origin/ prefix
                 let branch = line.strip_prefix("origin/").unwrap_or(line);
                 if branch == "HEAD" {
                     continue;
