@@ -4,6 +4,8 @@
 # Three modes: browse (default), uproot (cleanup), plant (create).
 # Progressive loading: local data instant, remote enriched via fzf --listen.
 
+_WT_PLUGIN_DIR="${0:A:h}"
+
 () {
 emulate -LR zsh
 
@@ -429,5 +431,15 @@ _wt() {
   _describe 'worktree' wt_descs -V worktrees
 }
 compdef _wt wt
+
+# Dev helper: rebuild wt-core and reload the plugin from source.
+# Works from anywhere — resolves the repo from this file's location.
+wt-dev() {
+  local root="$_WT_PLUGIN_DIR"
+  (cd "$root/rust" && cargo build --quiet) || return 1
+  export PATH="$root/rust/target/debug:$PATH"
+  source "$root/git-worktree-switcher.plugin.zsh"
+  echo "wt-core rebuilt + plugin reloaded"
+}
 
 } # end anonymous function
