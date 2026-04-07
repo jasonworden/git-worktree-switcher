@@ -453,11 +453,13 @@ wt-dev() {
     echo "Not a wt repo: $root" >&2
     return 1
   fi
-  echo "Building from: $root"
+  local branch
+  branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+  echo "wt-dev: $root (branch: $branch)"
   (cd "$root/rust" && cargo build --quiet) || return 1
   export PATH="$root/rust/target/debug:$PATH"
   source "$root/git-worktree-switcher.plugin.zsh"
-  echo "wt-core rebuilt + plugin reloaded"
+  echo "wt-dev: rebuilt + reloaded"
 }
 
 } # end anonymous function
