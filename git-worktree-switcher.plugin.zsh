@@ -203,7 +203,7 @@ _wt_picker() {
   } &
   local bg_pid=$!
 
-  fzf --ansi --height=60% \
+  fzf --ansi --height=100% \
     --listen="${fzf_port}" \
     --delimiter=$'\t' --with-nth=1 \
     --header="$header" \

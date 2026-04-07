@@ -196,104 +196,175 @@ fn gather_remote() -> Vec<Row> {
         .collect()
 }
 
-// -- Shared ANSI column formatters --
+// -- Dynamic column widths --
 
-fn format_stale_tag(row: &Row) -> String {
-    if row.stale {
-        format!(" {YELLOW}stale{RESET}")
-    } else {
-        String::new()
-    }
+struct ColWidths {
+    branch: usize,
+    rel: usize,
+    tree: usize,
+    ahead: usize,
+    remote: usize,
+    pr: usize,
+    verdict: usize,
 }
 
-fn format_tree_col(row: &Row) -> String {
-    if row.tree == "clean" {
-        format!("{GREEN}clean{RESET}")
-    } else {
-        format!("{RED}dirty{RESET}")
+fn compute_widths(rows: &[Row], include_verdict: bool) -> ColWidths {
+    let mut w = ColWidths {
+        branch: 6, // min: "BRANCH"
+        rel: 4,    // min: "PATH"
+        tree: 5,   // min: "clean"/"dirty"
+        ahead: 2,  // min: "··"
+        remote: 2,
+        pr: 2,
+        verdict: 6, // min: "unsafe"
+    };
+    for r in rows {
+        let blen = r.branch.len() + if r.stale { 6 } else { 0 }; // " stale"
+        w.branch = w.branch.max(blen);
+        w.rel = w.rel.max(r.rel.len());
+        w.tree = w.tree.max(r.tree.len());
+        w.ahead = w.ahead.max(r.ahead.len());
+        w.remote = w.remote.max(r.remote.len());
+        w.pr = w.pr.max(r.pr.len());
+        if include_verdict {
+            let vlen = match r.verdict.as_str() {
+                "safe" => 6, // "safe ✓"
+                v => v.len(),
+            };
+            w.verdict = w.verdict.max(vlen);
+        }
     }
+    w
 }
 
-fn format_ahead_col(row: &Row) -> String {
-    if row.ahead == MDASH {
-        format!("{DIM}{MDASH}{RESET}")
-    } else {
-        format!("{YELLOW}{}{RESET}", row.ahead)
-    }
+/// Pad a plain string to width, then wrap with ANSI color.
+fn colored(text: &str, color: &str, width: usize) -> String {
+    format!("{color}{text:<width$}{RESET}")
 }
 
-fn format_remote_col(row: &Row) -> String {
-    match row.remote.as_str() {
-        s if s.contains("gone") => format!("{RED}gone{RESET}"),
-        s if s.contains("origin") => format!("{GREEN}origin {CHECK}{RESET}"),
-        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
-        _ => format!("{DIM}{}{RESET}", row.remote),
-    }
-}
-
-fn format_pr_col(row: &Row) -> String {
-    match row.pr.as_str() {
-        s if s.contains("merged") => format!("{GREEN}{}{RESET}", row.pr),
-        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
-        _ => format!("{DIM}{}{RESET}", row.pr),
-    }
-}
-
-/// Format a row for browse mode display (ANSI colored, tab-separated from abs path).
-fn format_browse(row: &Row) -> String {
+/// Format a row for browse mode display.
+fn format_browse(row: &Row, w: &ColWidths) -> String {
     let indicator = if row.is_main {
         format!("{GREEN}{BULLET}{RESET}")
     } else {
         " ".to_string()
     };
 
+    let stale_suffix = if row.stale { " stale" } else { "" };
+    let branch_text = format!("{}{stale_suffix}", row.branch);
     let branch_col = if row.is_main {
-        format!("{GREEN}{}{RESET}", row.branch)
+        colored(&branch_text, GREEN, w.branch)
+    } else if row.stale {
+        // branch in cyan, "stale" in yellow
+        let pad = w.branch.saturating_sub(branch_text.len());
+        format!(
+            "{CYAN}{}{RESET} {YELLOW}stale{RESET}{:pad$}",
+            row.branch,
+            "",
+            pad = pad
+        )
     } else {
-        format!("{CYAN}{}{RESET}{}", row.branch, format_stale_tag(row))
+        colored(&branch_text, CYAN, w.branch)
+    };
+
+    let rel_col = colored(&row.rel, DIM, w.rel);
+    let tree_col = if row.tree == "dirty" {
+        colored(&row.tree, RED, w.tree)
+    } else {
+        colored(&row.tree, GREEN, w.tree)
+    };
+    let ahead_col = if row.ahead == MDASH || row.ahead == DOTS {
+        colored(&row.ahead, DIM, w.ahead)
+    } else {
+        colored(&row.ahead, YELLOW, w.ahead)
+    };
+    let remote_col = if row.remote.contains("gone") {
+        colored(&row.remote, RED, w.remote)
+    } else if row.remote.contains("origin") {
+        colored(&row.remote, GREEN, w.remote)
+    } else {
+        colored(&row.remote, DIM, w.remote)
+    };
+    let pr_col = if row.pr.contains("merged") {
+        colored(&row.pr, GREEN, w.pr)
+    } else {
+        colored(&row.pr, DIM, w.pr)
     };
 
     format!(
-        "{} {:<20} {DIM}{:<24}{RESET} {:<7} {:<7} {:<12} {}\t{}",
-        indicator,
-        branch_col,
-        row.rel,
-        format_tree_col(row),
-        format_ahead_col(row),
-        format_remote_col(row),
-        format_pr_col(row),
-        row.abs,
+        "{indicator} {branch_col}  {rel_col}  {tree_col}  {ahead_col}  {remote_col}  {pr_col}\t{abs}",
+        abs = row.abs,
     )
 }
 
 /// Format a row for uproot mode display (with verdict column).
-fn format_uproot(row: &Row) -> String {
+fn format_uproot(row: &Row, w: &ColWidths) -> String {
     if row.is_main {
+        let branch_col = format!("{DIM}{:<w$}{RESET}", row.branch, w = w.branch);
+        let rel_col = format!("{DIM}{:<w$}{RESET}", row.rel, w = w.rel);
+        let tree_col = format!("{DIM}{:<w$}{RESET}", row.tree, w = w.tree);
+        let ahead_col = format!("{DIM}{:<w$}{RESET}", row.ahead, w = w.ahead);
+        let remote_col = format!("{DIM}{:<w$}{RESET}", row.remote, w = w.remote);
+        let pr_col = format!("{DIM}{:<w$}{RESET}", row.pr, w = w.pr);
+        let verdict_col = format!("{DIM}{:<w$}{RESET}", "pinned", w = w.verdict);
         return format!(
-            "{DIM}  {:<20} {:<24} {:<7} {:<7} {:<12} {:<14} pinned{RESET}\t{}",
-            row.branch, row.rel, row.tree, row.ahead, row.remote, row.pr, row.abs,
+            "  {branch_col}  {rel_col}  {tree_col}  {ahead_col}  {remote_col}  {pr_col}  {verdict_col}\t{abs}",
+            abs = row.abs,
         );
     }
 
-    let branch_col = format!("{CYAN}{}{RESET}{}", row.branch, format_stale_tag(row));
+    let stale_suffix = if row.stale { " stale" } else { "" };
+    let branch_text = format!("{}{stale_suffix}", row.branch);
+    let branch_col = if row.stale {
+        let pad = w.branch.saturating_sub(branch_text.len());
+        format!(
+            "{CYAN}{}{RESET} {YELLOW}stale{RESET}{:pad$}",
+            row.branch,
+            "",
+            pad = pad
+        )
+    } else {
+        colored(&branch_text, CYAN, w.branch)
+    };
+
+    let rel_col = colored(&row.rel, DIM, w.rel);
+    let tree_col = if row.tree == "dirty" {
+        colored(&row.tree, RED, w.tree)
+    } else {
+        colored(&row.tree, GREEN, w.tree)
+    };
+    let ahead_col = if row.ahead == MDASH || row.ahead == DOTS {
+        colored(&row.ahead, DIM, w.ahead)
+    } else {
+        colored(&row.ahead, YELLOW, w.ahead)
+    };
+    let remote_col = if row.remote.contains("gone") {
+        colored(&row.remote, RED, w.remote)
+    } else if row.remote.contains("origin") {
+        colored(&row.remote, GREEN, w.remote)
+    } else {
+        colored(&row.remote, DIM, w.remote)
+    };
+    let pr_col = if row.pr.contains("merged") {
+        colored(&row.pr, GREEN, w.pr)
+    } else {
+        colored(&row.pr, DIM, w.pr)
+    };
+
+    let verdict_text = match row.verdict.as_str() {
+        "safe" => format!("safe {CHECK}"),
+        v => v.to_string(),
+    };
     let verdict_col = match row.verdict.as_str() {
-        "safe" => format!("{GREEN}safe {CHECK}{RESET}"),
-        "keep" => format!("{YELLOW}keep{RESET}"),
-        "unsafe" => format!("{RED}unsafe{RESET}"),
-        "pending" => format!("{DIM}...{RESET}"),
-        v => format!("{DIM}{v}{RESET}"),
+        "safe" => colored(&verdict_text, GREEN, w.verdict),
+        "keep" => colored(&verdict_text, YELLOW, w.verdict),
+        "unsafe" => colored(&verdict_text, RED, w.verdict),
+        _ => colored(&verdict_text, DIM, w.verdict),
     };
 
     format!(
-        "  {:<20} {DIM}{:<24}{RESET} {:<7} {:<7} {:<12} {:<14} {}\t{}",
-        branch_col,
-        row.rel,
-        format_tree_col(row),
-        format_ahead_col(row),
-        format_remote_col(row),
-        format_pr_col(row),
-        verdict_col,
-        row.abs,
+        "  {branch_col}  {rel_col}  {tree_col}  {ahead_col}  {remote_col}  {pr_col}  {verdict_col}\t{abs}",
+        abs = row.abs,
     )
 }
 
@@ -310,27 +381,29 @@ pub fn run_remote_formatted(format: &str) {
 }
 
 fn output_rows(rows: &[Row], format: &str) {
-    // In uproot mode, sort safe items first (after main/pinned) for easy batch selection
-    if format == "uproot" {
-        let mut sorted: Vec<&Row> = rows.iter().collect();
-        sorted.sort_by_key(|r| match r.verdict.as_str() {
-            "pinned" => 0,
-            "safe" => 1,
-            "keep" => 2,
-            "unsafe" => 3,
-            _ => 4,
-        });
-        for row in sorted {
-            println!("{}", format_uproot(row));
+    match format {
+        "browse" => {
+            let w = compute_widths(rows, false);
+            for row in rows {
+                println!("{}", format_browse(row, &w));
+            }
         }
-        return;
-    }
-    for row in rows {
-        match format {
-            "browse" => println!("{}", format_browse(row)),
-            "uproot" => println!("{}", format_uproot(row)),
-            _ => {
-                // Raw TSV
+        "uproot" => {
+            let mut sorted: Vec<&Row> = rows.iter().collect();
+            sorted.sort_by_key(|r| match r.verdict.as_str() {
+                "pinned" => 0,
+                "safe" => 1,
+                "keep" => 2,
+                "unsafe" => 3,
+                _ => 4,
+            });
+            let w = compute_widths(rows, true);
+            for row in sorted {
+                println!("{}", format_uproot(row, &w));
+            }
+        }
+        _ => {
+            for row in rows {
                 println!(
                     "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     row.branch,
