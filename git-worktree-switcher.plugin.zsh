@@ -182,14 +182,20 @@ _wt_picker() {
 
   # Pick a random port for fzf --listen (non-blocking progressive loading)
   local fzf_port=$((10000 + RANDOM % 50000))
+  local remote_cache=$(mktemp "${tmpdir}/wt-remote.XXXXXX")
 
-  # Background: fetch remote data, then tell fzf to reload via HTTP POST
+  # Background: run the slow remote gather, write to file, then tell fzf
+  # to reload from the file (cat is instant — no UI freeze).
   {
-    # Wait briefly for fzf to start listening
-    sleep 0.3
-    curl -s -X POST "http://localhost:${fzf_port}" \
-      -d "reload(wt-core unified --remote --format=browse 2>/dev/null)+change-header(${browse_hdr_done})" \
-      2>/dev/null
+    wt-core unified --remote --format="$format_flag" > "$remote_cache" 2>/dev/null
+    # Brief retry loop: fzf may not be listening yet on first iteration
+    local i
+    for i in 1 2 3; do
+      curl -s -X POST "http://localhost:${fzf_port}" \
+        -d "reload(cat ${remote_cache})+change-header(${browse_hdr_done})" \
+        2>/dev/null && break
+      sleep 0.2
+    done
   } &
   local bg_pid=$!
 
@@ -213,7 +219,7 @@ _wt_picker() {
 
   # Clean up background process and temp files
   kill $bg_pid 2>/dev/null; wait $bg_pid 2>/dev/null
-  rm -f "$local_cache"
+  rm -f "$local_cache" "$remote_cache"
 
   [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return; }
 
