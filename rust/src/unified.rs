@@ -55,40 +55,24 @@ fn is_stale(path: &str) -> bool {
     now.saturating_sub(timestamp) > STALE_THRESHOLD_SECS
 }
 
-/// Gather local-only data (instant, no network).
+/// Gather instant data — only `git worktree list` (single subprocess).
+/// Defers dirty/ahead/stale checks to the remote pass.
 fn gather_local() -> Vec<Row> {
-    let cfg = config::load();
     let worktrees = git::list_worktrees();
     let main_path = worktrees.iter().find(|w| w.is_main).map(|w| w.path.clone());
-    let default_branch = git::default_branch().unwrap_or_else(|| "main".to_string());
 
     worktrees
         .iter()
         .map(|wt| {
             let rel = entries::worktree_rel(wt, main_path.as_ref());
-            let dirty = git::has_changes(&wt.path);
-            let tree = if dirty { "dirty" } else { "clean" }.to_string();
-
-            let ahead = if wt.is_main {
-                MDASH.to_string()
-            } else {
-                let n = git::unique_commits(&wt.branch, &default_branch);
-                if n > 0 {
-                    n.to_string()
-                } else {
-                    MDASH.to_string()
-                }
-            };
-
             let abs = wt.path.to_string_lossy().to_string();
-            let stale = !wt.is_main && cfg.stale_warning && is_stale(&abs);
 
             Row {
                 branch: wt.branch.clone(),
                 rel,
                 abs,
-                tree,
-                ahead,
+                tree: DOTS.to_string(),
+                ahead: DOTS.to_string(),
                 remote: DOTS.to_string(),
                 pr: DOTS.to_string(),
                 verdict: if wt.is_main {
@@ -97,7 +81,7 @@ fn gather_local() -> Vec<Row> {
                     "pending".to_string()
                 },
                 is_main: wt.is_main,
-                stale,
+                stale: false,
             }
         })
         .collect()

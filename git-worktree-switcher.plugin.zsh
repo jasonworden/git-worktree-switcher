@@ -130,12 +130,12 @@ _wt_picker() {
   local local_cache=$(mktemp "${tmpdir}/wt-local.XXXXXX")
 
   # Headers per mode
-  local browse_hdr=$'\033[33m\u21bb Loading...\033[0m  /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open'
-  local browse_hdr_done=$'\033[32m\u2713 Ready\033[0m  /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open'
+  local browse_hdr=$'\033[33m\u21bb Loading...\033[0m  /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open \u00b7 ctrl-p preview'
+  local browse_hdr_done=$'\033[32m\u2713 Ready\033[0m  /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open \u00b7 ctrl-p preview'
   local uproot_hdr=$'\033[31m\u26a0 UPROOT MODE\033[0m  tab select \u00b7 enter confirm \u00b7 esc browse'
   local plant_hdr="Select branch or [new branch] \u00b7 esc cancel"
 
-  # Preview command (uses abs path from last tab-delimited field)
+  # Preview command (toggled with ctrl-p)
   local preview_cmd='wt-core unified --preview {-1} 2>/dev/null'
 
   if [[ "$initial_mode" == "plant" ]]; then
@@ -199,8 +199,9 @@ _wt_picker() {
     --header="$header" \
     --prompt="$prompt_str" \
     --preview="$preview_cmd" \
-    --preview-window=right:40%:wrap \
+    --preview-window=right:40%:wrap:hidden \
     --expect=ctrl-o,ctrl-x \
+    --bind="ctrl-p:toggle-preview" \
     --bind="tab:toggle+down" \
     --bind="alt-1:reload($local_browse)+change-header($browse_hdr_done)+change-prompt(> )" \
     --bind="alt-2:reload($reload_uproot)+change-header($uproot_hdr)+change-prompt(uproot> )" \

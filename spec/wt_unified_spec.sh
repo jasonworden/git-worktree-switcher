@@ -37,18 +37,25 @@ Describe "wt-core unified --local"
     The second line of output should include "pending"
   End
 
-  It "detects dirty worktree"
+  It "local mode uses placeholders for tree/ahead (fast path)"
     WT_PATH=$(add_test_worktree "$TEST_REPO" "feature-x")
     echo "dirty" > "$WT_PATH/newfile.txt"
     When call wt-core unified --local
+    The second line of output should include "··"
+  End
+
+  It "remote mode detects dirty worktree"
+    WT_PATH=$(add_test_worktree "$TEST_REPO" "feature-x")
+    echo "dirty" > "$WT_PATH/newfile.txt"
+    When call wt-core unified --remote
     The second line of output should include "dirty"
   End
 
-  It "counts unique commits ahead"
+  It "remote mode counts unique commits ahead"
     WT_PATH=$(add_test_worktree "$TEST_REPO" "feature-x")
     git -C "$WT_PATH" commit --allow-empty -m "unique1" --quiet
     git -C "$WT_PATH" commit --allow-empty -m "unique2" --quiet
-    When call wt-core unified --local
+    When call wt-core unified --remote
     The second line of output should include "2"
   End
 
