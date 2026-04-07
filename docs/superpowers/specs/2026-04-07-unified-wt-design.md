@@ -60,7 +60,7 @@ Old subcommands (`picker`, `entries`, `clean-check`) are deprecated but kept for
 ### TSV Schema
 
 ```
-branch \t rel_path \t abs_path \t tree_status \t ahead_count \t remote_status \t pr_status \t verdict \t is_main
+branch \t rel_path \t abs_path \t tree_status \t ahead_count \t remote_status \t pr_status \t verdict \t is_main \t stale
 ```
 
 | Column | Local | Remote | Values |
@@ -74,6 +74,7 @@ branch \t rel_path \t abs_path \t tree_status \t ahead_count \t remote_status \t
 | `pr_status` | no | yes | `#N merged`, `#N open`, `no PR`, `—`, `no gh` |
 | `verdict` | partial | yes | `pending` (local), `safe`, `keep`, `unsafe`, `pinned` (remote) |
 | `is_main` | yes | — | `true` or `false` |
+| `stale` | yes | — | `true` or `false` (last commit > 2 weeks old) |
 
 ### No-Remote Handling
 
@@ -293,7 +294,7 @@ Any setting in `.wt/config` can be disabled personally: if team sets `opinionate
 opinionated = true
 basedir = ".worktrees"
 
-[wt.opinionated]
+[wt.settings]
 mainGuard = true
 autoFetch = true
 branchPrefix = true
@@ -302,6 +303,10 @@ autoCd = true
 deleteBranch = true
 autoGitignore = true
 ```
+
+> **Note:** `wt.opinionated` is a boolean that enables the opinionated defaults bundle.
+> Individual overrides go under `[wt.settings]` (not `[wt.opinionated]`, since TOML
+> doesn't allow a key to be both a value and a table).
 
 ### Personal Overrides via `git config`
 

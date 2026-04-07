@@ -28,14 +28,9 @@ struct TomlWt {
     opinionated: Option<bool>,
     basedir: Option<String>,
     #[serde(default)]
-    opinionated_settings: Option<TomlOpinionated>,
+    settings: Option<TomlOpinionated>,
     hook: Option<TomlHook>,
 }
-
-// Supports both [wt.opinionated] (table) and wt.opinionated (bool).
-// The TOML key "opinionated" as bool lives in TomlWt::opinionated.
-// Sub-settings live under [wt.opinionated_settings] mapped from [wt.opinionated.*] keys.
-// We handle this by trying to parse the file with a flexible approach.
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,7 +107,7 @@ pub fn load() -> Config {
                 if let Some(v) = wt.basedir {
                     cfg.basedir = Some(v);
                 }
-                if let Some(op) = wt.opinionated_settings {
+                if let Some(op) = wt.settings {
                     apply_opinionated_settings(&mut cfg, &op);
                 }
                 if let Some(hook) = wt.hook {
@@ -282,6 +277,10 @@ mod tests {
 opinionated = true
 basedir = ".worktrees"
 
+[wt.settings]
+mainGuard = true
+staleWarning = true
+
 [wt.hook]
 post-plant = "npm install"
 post-enter = "nvm use"
@@ -290,6 +289,9 @@ post-enter = "nvm use"
         let wt = parsed.wt.unwrap();
         assert_eq!(wt.opinionated, Some(true));
         assert_eq!(wt.basedir.as_deref(), Some(".worktrees"));
+        let settings = wt.settings.unwrap();
+        assert_eq!(settings.main_guard, Some(true));
+        assert_eq!(settings.stale_warning, Some(true));
         let hook = wt.hook.unwrap();
         assert_eq!(hook.post_plant.as_deref(), Some("npm install"));
         assert_eq!(hook.post_enter.as_deref(), Some("nvm use"));

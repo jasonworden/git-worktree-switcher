@@ -9,12 +9,7 @@ mod unified;
 use clap::{Parser, Subcommand};
 
 fn long_version() -> &'static str {
-    concat!(
-        env!("CARGO_PKG_VERSION"),
-        " (",
-        env!("WT_GIT_SHA"),
-        ")"
-    )
+    concat!(env!("CARGO_PKG_VERSION"), " (", env!("WT_GIT_SHA"), ")")
 }
 
 #[derive(Parser)]

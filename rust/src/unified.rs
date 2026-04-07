@@ -212,6 +212,49 @@ fn gather_remote() -> Vec<Row> {
         .collect()
 }
 
+// -- Shared ANSI column formatters --
+
+fn format_stale_tag(row: &Row) -> String {
+    if row.stale {
+        format!(" {YELLOW}stale{RESET}")
+    } else {
+        String::new()
+    }
+}
+
+fn format_tree_col(row: &Row) -> String {
+    if row.tree == "clean" {
+        format!("{GREEN}clean{RESET}")
+    } else {
+        format!("{RED}dirty{RESET}")
+    }
+}
+
+fn format_ahead_col(row: &Row) -> String {
+    if row.ahead == MDASH {
+        format!("{DIM}{MDASH}{RESET}")
+    } else {
+        format!("{YELLOW}{}{RESET}", row.ahead)
+    }
+}
+
+fn format_remote_col(row: &Row) -> String {
+    match row.remote.as_str() {
+        s if s.contains("gone") => format!("{RED}gone{RESET}"),
+        s if s.contains("origin") => format!("{GREEN}origin {CHECK}{RESET}"),
+        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
+        _ => format!("{DIM}{}{RESET}", row.remote),
+    }
+}
+
+fn format_pr_col(row: &Row) -> String {
+    match row.pr.as_str() {
+        s if s.contains("merged") => format!("{GREEN}{}{RESET}", row.pr),
+        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
+        _ => format!("{DIM}{}{RESET}", row.pr),
+    }
+}
+
 /// Format a row for browse mode display (ANSI colored, tab-separated from abs path).
 fn format_browse(row: &Row) -> String {
     let indicator = if row.is_main {
@@ -220,46 +263,22 @@ fn format_browse(row: &Row) -> String {
         " ".to_string()
     };
 
-    let stale_tag = if row.stale {
-        format!(" {YELLOW}stale{RESET}")
-    } else {
-        String::new()
-    };
-
     let branch_col = if row.is_main {
         format!("{GREEN}{}{RESET}", row.branch)
     } else {
-        format!("{CYAN}{}{RESET}{stale_tag}", row.branch)
-    };
-
-    let tree_col = if row.tree == "clean" {
-        format!("{GREEN}clean{RESET}")
-    } else {
-        format!("{RED}dirty{RESET}")
-    };
-
-    let ahead_col = if row.ahead == MDASH {
-        format!("{DIM}{MDASH}{RESET}")
-    } else {
-        format!("{YELLOW}{}{RESET}", row.ahead)
-    };
-
-    let remote_col = match row.remote.as_str() {
-        s if s.contains("gone") => format!("{RED}gone{RESET}"),
-        s if s.contains("origin") => format!("{GREEN}origin {CHECK}{RESET}"),
-        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
-        _ => format!("{DIM}{}{RESET}", row.remote),
-    };
-
-    let pr_col = match row.pr.as_str() {
-        s if s.contains("merged") => format!("{GREEN}{}{RESET}", row.pr),
-        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
-        _ => format!("{DIM}{}{RESET}", row.pr),
+        format!("{CYAN}{}{RESET}{}", row.branch, format_stale_tag(row))
     };
 
     format!(
         "{} {:<20} {DIM}{:<24}{RESET} {:<7} {:<7} {:<12} {}\t{}",
-        indicator, branch_col, row.rel, tree_col, ahead_col, remote_col, pr_col, row.abs,
+        indicator,
+        branch_col,
+        row.rel,
+        format_tree_col(row),
+        format_ahead_col(row),
+        format_remote_col(row),
+        format_pr_col(row),
+        row.abs,
     )
 }
 
@@ -272,33 +291,7 @@ fn format_uproot(row: &Row) -> String {
         );
     }
 
-    let stale_tag = if row.stale {
-        format!(" {YELLOW}stale{RESET}")
-    } else {
-        String::new()
-    };
-    let branch_col = format!("{CYAN}{}{RESET}{stale_tag}", row.branch);
-    let tree_col = if row.tree == "clean" {
-        format!("{GREEN}clean{RESET}")
-    } else {
-        format!("{RED}dirty{RESET}")
-    };
-    let ahead_col = if row.ahead == MDASH {
-        format!("{DIM}{MDASH}{RESET}")
-    } else {
-        format!("{YELLOW}{}{RESET}", row.ahead)
-    };
-    let remote_col = match row.remote.as_str() {
-        s if s.contains("gone") => format!("{RED}gone{RESET}"),
-        s if s.contains("origin") => format!("{GREEN}origin {CHECK}{RESET}"),
-        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
-        _ => format!("{DIM}{}{RESET}", row.remote),
-    };
-    let pr_col = match row.pr.as_str() {
-        s if s.contains("merged") => format!("{GREEN}{}{RESET}", row.pr),
-        s if s == DOTS => format!("{DIM}{DOTS}{RESET}"),
-        _ => format!("{DIM}{}{RESET}", row.pr),
-    };
+    let branch_col = format!("{CYAN}{}{RESET}{}", row.branch, format_stale_tag(row));
     let verdict_col = match row.verdict.as_str() {
         "safe" => format!("{GREEN}safe {CHECK}{RESET}"),
         "keep" => format!("{YELLOW}keep{RESET}"),
@@ -309,7 +302,14 @@ fn format_uproot(row: &Row) -> String {
 
     format!(
         "  {:<20} {DIM}{:<24}{RESET} {:<7} {:<7} {:<12} {:<14} {}\t{}",
-        branch_col, row.rel, tree_col, ahead_col, remote_col, pr_col, verdict_col, row.abs,
+        branch_col,
+        row.rel,
+        format_tree_col(row),
+        format_ahead_col(row),
+        format_remote_col(row),
+        format_pr_col(row),
+        verdict_col,
+        row.abs,
     )
 }
 
@@ -326,6 +326,21 @@ pub fn run_remote_formatted(format: &str) {
 }
 
 fn output_rows(rows: &[Row], format: &str) {
+    // In uproot mode, sort safe items first (after main/pinned) for easy batch selection
+    if format == "uproot" {
+        let mut sorted: Vec<&Row> = rows.iter().collect();
+        sorted.sort_by_key(|r| match r.verdict.as_str() {
+            "pinned" => 0,
+            "safe" => 1,
+            "keep" => 2,
+            "unsafe" => 3,
+            _ => 4,
+        });
+        for row in sorted {
+            println!("{}", format_uproot(row));
+        }
+        return;
+    }
     for row in rows {
         match format {
             "browse" => println!("{}", format_browse(row)),

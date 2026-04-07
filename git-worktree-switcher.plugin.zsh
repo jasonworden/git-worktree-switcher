@@ -129,11 +129,9 @@ _wt_picker() {
   check=$(wt-core unified --local 2>/dev/null)
   [[ -z "$check" ]] && return
 
-  # Temp files
+  # Temp file for fzf output
   local tmpdir="${TMPDIR:-/tmp}"
   local fzf_out=$(mktemp "${tmpdir}/wt-fzf.XXXXXX")
-  local mode_file=$(mktemp "${tmpdir}/wt-mode.XXXXXX")
-  echo "$initial_mode" > "$mode_file"
 
   # Headers per mode
   local browse_hdr=$'\033[33m\u21bb Loading...\033[0m  /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open'
@@ -149,14 +147,14 @@ _wt_picker() {
     wt-core unified --branches 2>/dev/null | \
       fzf --ansi --height=40% --header="$plant_hdr" --prompt="plant> " > "$fzf_out"
 
-    [[ -s "$fzf_out" ]] || { rm -f "$fzf_out" "$mode_file"; return; }
+    [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return; }
     local selection=$(<"$fzf_out")
-    rm -f "$fzf_out" "$mode_file"
+    rm -f "$fzf_out"
     _wt_handle_plant "$selection"
     return
   fi
 
-  # Browse or Uproot mode — use fzf with reload for progressive loading
+  # Browse or Uproot mode — use fzf with progressive loading
   local format_flag="browse"
   local prompt_str="> "
   local header="$browse_hdr"
@@ -169,15 +167,36 @@ _wt_picker() {
     extra_args+=(--multi)
   fi
 
-  # The key trick: fzf starts with --local data, then a bind triggers --remote reload.
-  # We use 'start' binding (fzf 0.44+) or 'load' binding to trigger the background reload.
-  # For broader compat, we use become/execute-silent + reload pattern.
+  local reload_browse="wt-core unified --remote --format=browse 2>/dev/null"
+  local reload_uproot="wt-core unified --remote --format=uproot 2>/dev/null"
+  local local_browse="wt-core unified --local --format=browse 2>/dev/null"
 
-  local reload_cmd="wt-core unified --remote --format=${format_flag} 2>/dev/null"
-  local local_cmd="wt-core unified --local --format=${format_flag} 2>/dev/null"
+  # Slash command handler: detects /browse, /uproot, /plant typed in query
+  local slash_cmd
+  slash_cmd='case {q} in'
+  slash_cmd+=' /browse) echo "change-query()+reload('"$local_browse"')+change-header('"$browse_hdr_done"')+change-prompt(> )";; '
+  slash_cmd+=' /uproot) echo "change-query()+reload('"$reload_uproot"')+change-header('"$uproot_hdr"')+change-prompt(uproot> )";; '
+  slash_cmd+=' /plant) echo "become(echo __PLANT__)";; '
+  slash_cmd+=' esac'
+
+  # Pick a random port for fzf --listen (non-blocking progressive loading)
+  local fzf_port=$((10000 + RANDOM % 50000))
+  local remote_tmp=$(mktemp "${tmpdir}/wt-remote.XXXXXX")
+
+  # Background: fetch remote data, then tell fzf to reload via HTTP
+  {
+    wt-core unified --remote --format=browse > "$remote_tmp" 2>/dev/null
+    # URL-encode the reload command (newlines in data handled by reload-sync file approach)
+    curl -s "localhost:${fzf_port}" \
+      -d "reload-sync(wt-core unified --remote --format=browse 2>/dev/null)+change-header($browse_hdr_done)" \
+      2>/dev/null
+    rm -f "$remote_tmp"
+  } &
+  local bg_pid=$!
 
   wt-core unified --local --format="$format_flag" 2>/dev/null | \
     fzf --ansi --height=60% \
+      --listen="localhost:${fzf_port}" \
       --delimiter=$'\t' --with-nth=1 \
       --header="$header" \
       --prompt="$prompt_str" \
@@ -185,25 +204,29 @@ _wt_picker() {
       --preview-window=right:40%:wrap \
       --expect=ctrl-o,ctrl-x \
       --bind="tab:toggle+down" \
-      --bind="load:reload-sync($reload_cmd)+change-header($browse_hdr_done)" \
-      --bind="alt-1:reload($local_cmd)+change-header($browse_hdr_done)+change-prompt(> )" \
-      --bind="alt-2:reload(wt-core unified --remote --format=uproot 2>/dev/null)+change-header($uproot_hdr)+change-prompt(uproot> )" \
+      --bind="alt-1:reload($local_browse)+change-header($browse_hdr_done)+change-prompt(> )" \
+      --bind="alt-2:reload($reload_uproot)+change-header($uproot_hdr)+change-prompt(uproot> )" \
       --bind="alt-3:become(echo __PLANT__)" \
       --bind="ctrl-]:become(echo __CYCLE__)" \
-      --bind="esc:reload($local_cmd)+change-header($browse_hdr_done)+change-prompt(> )" \
+      --bind="esc:reload($local_browse)+change-header($browse_hdr_done)+change-prompt(> )" \
+      --bind="change:transform:$slash_cmd" \
       "${extra_args[@]}" > "$fzf_out"
 
-  [[ -s "$fzf_out" ]] || { rm -f "$fzf_out" "$mode_file"; return; }
+  # Clean up background process
+  kill $bg_pid 2>/dev/null; wait $bg_pid 2>/dev/null
+  rm -f "$remote_tmp"
+
+  [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return; }
 
   # Check for mode-switch signals from become() bindings
   local first_line=$(<"$fzf_out")
   if [[ "$first_line" == "__PLANT__" ]]; then
-    rm -f "$fzf_out" "$mode_file"
+    rm -f "$fzf_out"
     _wt_picker "plant"
     return
   fi
   if [[ "$first_line" == "__CYCLE__" ]]; then
-    rm -f "$fzf_out" "$mode_file"
+    rm -f "$fzf_out"
     # Cycle: browse -> uproot -> plant -> browse
     case "$initial_mode" in
       browse) _wt_picker "uproot" ;;
@@ -218,14 +241,14 @@ _wt_picker() {
   if [[ "$initial_mode" == "uproot" || "$prompt_str" == "uproot> " ]]; then
     local -a selected_lines
     selected_lines=("${(@f)$(tail -n +2 "$fzf_out")}")
-    rm -f "$fzf_out" "$mode_file"
+    rm -f "$fzf_out"
     _wt_handle_uproot "${selected_lines[@]}"
     return
   fi
 
   # Browse mode result
   local selection=$(tail -1 "$fzf_out")
-  rm -f "$fzf_out" "$mode_file"
+  rm -f "$fzf_out"
   [[ -n "$selection" ]] || return
 
   local abs_path=$(echo "$selection" | awk -F'\t' '{print $NF}')
@@ -316,16 +339,20 @@ _wt_handle_uproot() {
   default_branch=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo "main")
   default_branch="${default_branch#origin/}"
 
+  local main_wt_path
+  main_wt_path=$(wt-core main-worktree 2>/dev/null)
+
   local -a paths branches
   local line abs_path branch_name
   for line in "${lines[@]}"; do
     [[ -n "$line" ]] || continue
     abs_path=$(echo "$line" | awk -F'\t' '{print $NF}')
-    # Extract branch: strip ANSI, trim leading spaces, take first word
-    branch_name=$(echo "$line" | sed $'s/\033\\[[0-9;]*m//g' | sed 's/^[[:space:]]*//' | awk '{print $1}')
-    [[ -n "$abs_path" && -n "$branch_name" ]] || continue
-    # Skip main worktree (pinned verdict or main guard)
-    [[ "$branch_name" == "pinned" ]] && continue
+    [[ -n "$abs_path" && -d "$abs_path" ]] || continue
+    # Get branch name directly from the worktree via git
+    branch_name=$(git -C "$abs_path" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    [[ -n "$branch_name" ]] || continue
+    # Skip main worktree
+    [[ "$abs_path" == "$main_wt_path" ]] && continue
     if [[ "$main_guard" == "true" && "$branch_name" == "$default_branch" ]]; then
       echo "Skipping $branch_name (main guard enabled)" >&2
       continue
@@ -345,15 +372,12 @@ _wt_handle_uproot() {
   read -q || { echo; return 1; }
   echo
 
-  local main_wt
-  main_wt=$(wt-core main-worktree)
-
   local i wt_path branch
   for i in {1..${#paths[@]}}; do
     wt_path="${paths[$i]}"
     branch="${branches[$i]}"
 
-    [[ "$PWD" == "$wt_path"* ]] && cd "$main_wt"
+    [[ "$PWD" == "$wt_path"* ]] && cd "$main_wt_path"
 
     if wt-core delete "$wt_path" 2>/dev/null; then
       echo "Removed worktree: $branch"
