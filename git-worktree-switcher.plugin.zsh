@@ -124,14 +124,10 @@ _wt_picker() {
   emulate -LR zsh
   local initial_mode="${1:-browse}"
 
-  # Verify data exists
-  local check
-  check=$(wt-core unified --local 2>/dev/null)
-  [[ -z "$check" ]] && return
-
-  # Temp file for fzf output
+  # Temp files
   local tmpdir="${TMPDIR:-/tmp}"
   local fzf_out=$(mktemp "${tmpdir}/wt-fzf.XXXXXX")
+  local local_cache=$(mktemp "${tmpdir}/wt-local.XXXXXX")
 
   # Headers per mode
   local browse_hdr=$'\033[33m\u21bb Loading...\033[0m  /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open'
@@ -144,6 +140,7 @@ _wt_picker() {
 
   if [[ "$initial_mode" == "plant" ]]; then
     # Plant mode: simple branch picker
+    rm -f "$local_cache"
     wt-core unified --branches 2>/dev/null | \
       fzf --ansi --height=40% --header="$plant_hdr" --prompt="plant> " > "$fzf_out"
 
@@ -154,7 +151,7 @@ _wt_picker() {
     return
   fi
 
-  # Browse or Uproot mode — use fzf with progressive loading
+  # Browse or Uproot mode — cache local data (single gather, instant display)
   local format_flag="browse"
   local prompt_str="> "
   local header="$browse_hdr"
@@ -179,42 +176,43 @@ _wt_picker() {
   slash_cmd+=' /plant) echo "become(echo __PLANT__)";; '
   slash_cmd+=' esac'
 
+  # Gather local data once, cache to file for instant display
+  wt-core unified --local --format="$format_flag" > "$local_cache" 2>/dev/null
+  [[ -s "$local_cache" ]] || { rm -f "$fzf_out" "$local_cache"; return; }
+
   # Pick a random port for fzf --listen (non-blocking progressive loading)
   local fzf_port=$((10000 + RANDOM % 50000))
-  local remote_tmp=$(mktemp "${tmpdir}/wt-remote.XXXXXX")
 
-  # Background: fetch remote data, then tell fzf to reload via HTTP
+  # Background: fetch remote data, then tell fzf to reload via HTTP POST
   {
-    wt-core unified --remote --format=browse > "$remote_tmp" 2>/dev/null
-    # URL-encode the reload command (newlines in data handled by reload-sync file approach)
-    curl -s "localhost:${fzf_port}" \
-      -d "reload-sync(wt-core unified --remote --format=browse 2>/dev/null)+change-header($browse_hdr_done)" \
+    # Wait briefly for fzf to start listening
+    sleep 0.3
+    curl -s -X POST "http://localhost:${fzf_port}" \
+      -d "reload(wt-core unified --remote --format=browse 2>/dev/null)+change-header(${browse_hdr_done})" \
       2>/dev/null
-    rm -f "$remote_tmp"
   } &
   local bg_pid=$!
 
-  wt-core unified --local --format="$format_flag" 2>/dev/null | \
-    fzf --ansi --height=60% \
-      --listen="localhost:${fzf_port}" \
-      --delimiter=$'\t' --with-nth=1 \
-      --header="$header" \
-      --prompt="$prompt_str" \
-      --preview="$preview_cmd" \
-      --preview-window=right:40%:wrap \
-      --expect=ctrl-o,ctrl-x \
-      --bind="tab:toggle+down" \
-      --bind="alt-1:reload($local_browse)+change-header($browse_hdr_done)+change-prompt(> )" \
-      --bind="alt-2:reload($reload_uproot)+change-header($uproot_hdr)+change-prompt(uproot> )" \
-      --bind="alt-3:become(echo __PLANT__)" \
-      --bind="ctrl-]:become(echo __CYCLE__)" \
-      --bind="esc:reload($local_browse)+change-header($browse_hdr_done)+change-prompt(> )" \
-      --bind="change:transform:$slash_cmd" \
-      "${extra_args[@]}" > "$fzf_out"
+  fzf --ansi --height=60% \
+    --listen="${fzf_port}" \
+    --delimiter=$'\t' --with-nth=1 \
+    --header="$header" \
+    --prompt="$prompt_str" \
+    --preview="$preview_cmd" \
+    --preview-window=right:40%:wrap \
+    --expect=ctrl-o,ctrl-x \
+    --bind="tab:toggle+down" \
+    --bind="alt-1:reload($local_browse)+change-header($browse_hdr_done)+change-prompt(> )" \
+    --bind="alt-2:reload($reload_uproot)+change-header($uproot_hdr)+change-prompt(uproot> )" \
+    --bind="alt-3:become(echo __PLANT__)" \
+    --bind="ctrl-]:become(echo __CYCLE__)" \
+    --bind="esc:reload($local_browse)+change-header($browse_hdr_done)+change-prompt(> )" \
+    --bind="change:transform:$slash_cmd" \
+    "${extra_args[@]}" < "$local_cache" > "$fzf_out"
 
-  # Clean up background process
+  # Clean up background process and temp files
   kill $bg_pid 2>/dev/null; wait $bg_pid 2>/dev/null
-  rm -f "$remote_tmp"
+  rm -f "$local_cache"
 
   [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return; }
 
