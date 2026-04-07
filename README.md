@@ -115,15 +115,48 @@ make build              # or: npm run build          (debug)
 make build-release      # or: npm run build:release  (optimized)
 ```
 
-To build and load the plugin into your current shell:
+#### Testing local changes in any repo
+
+`wt-dev` rebuilds `wt-core` from source, updates your `PATH`, and reloads the plugin — so `wt` immediately uses your latest code. It works from any directory on your machine.
+
+**One-time setup — add this alias to your `.zshrc`:**
 
 ```zsh
-source dev.sh     # one-time: loads the wt-dev function
-wt-dev            # rebuild + reload (auto-detects worktree from PWD)
-wt-dev /path/to/worktree  # or specify explicitly
+alias wt-dev='source ~/code/git-worktree-switcher/dev.sh && wt-dev'
 ```
 
-`wt-dev` compiles `wt-core`, adds it to `PATH`, and sources the plugin — ready to test immediately. Run it again after any code change.
+> This uses a **lazy-load pattern**: the first call expands the alias, which
+> sources `dev.sh` (defining the `wt-dev` *function*), then calls `wt-dev`
+> (now the function). On subsequent calls, the function already exists and
+> takes priority over the alias — so the alias effectively bootstraps itself
+> out of existence. You get zero startup cost and no manual sourcing.
+
+**Then from any directory, any repo:**
+
+```zsh
+wt-dev                              # auto-detect (if PWD is inside this repo)
+wt-dev ~/code/git-worktree-switcher # build from main checkout
+wt-dev ~/code/git-worktree-switcher/.claude/worktrees/feat-cmd-merge  # from a worktree
+```
+
+`wt-dev` resolves the build source in this order:
+1. **Explicit path** if you pass one as an argument
+2. **Current git root** if you're `cd`'d into this repo (or any of its worktrees)
+3. **Last loaded location** (remembered from the previous `wt-dev` call)
+
+After the first call, just run `wt-dev` again whenever you change code — no arguments needed.
+
+Output looks like:
+```
+wt-dev: /Users/you/code/git-worktree-switcher/.claude/worktrees/feat-cmd-merge (branch: feat-cmd-merge)
+wt-dev: rebuilt + reloaded
+```
+
+You can also verify exactly which build you're running:
+```zsh
+wt-core --version
+# wt-core 1.0.0 (a98f888-dirty)
+```
 
 #### Prerequisites for development
 
