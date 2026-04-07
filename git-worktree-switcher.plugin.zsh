@@ -94,6 +94,8 @@ Browse keybindings:
   tab      Toggle multi-select
   ctrl-o   Open in editor ($WT_OPENER)
   ctrl-x   Delete worktree (with confirmation)
+  ctrl-r   Refresh (re-fetch remote data)
+  ctrl-p   Toggle preview pane
 EOF
     return
   fi
@@ -129,10 +131,12 @@ _wt_picker() {
   local fzf_out=$(mktemp "${tmpdir}/wt-fzf.XXXXXX")
   local local_cache=$(mktemp "${tmpdir}/wt-local.XXXXXX")
 
-  # Headers per mode
-  local browse_hdr='/uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open \u00b7 ctrl-p preview'
-  local uproot_hdr=$'\033[31m\u26a0 UPROOT MODE\033[0m  tab select \u00b7 enter confirm \u00b7 esc browse'
-  local plant_hdr="Select branch or [new branch] \u00b7 esc cancel"
+  # Headers per mode (use literal UTF-8, no escape sequences — keeps curl safe)
+  local browse_hdr_load='Loading… · /uproot · /plant · enter cd · ctrl-o open · ctrl-p preview'
+  local browse_hdr='✓ · /uproot · /plant · enter cd · ctrl-o open · ctrl-p preview · ctrl-r refresh'
+  local uproot_hdr_load='Loading… · UPROOT MODE · tab select · enter confirm · esc browse'
+  local uproot_hdr='✓ · UPROOT MODE · tab select · enter confirm · esc browse · ctrl-r refresh'
+  local plant_hdr='Select branch or [new branch] · esc cancel'
 
   # Preview command (toggled with ctrl-p)
   local preview_cmd='wt-core unified --preview {-1} 2>/dev/null'
@@ -153,13 +157,15 @@ _wt_picker() {
   # Browse or Uproot mode — cache local data (single gather, instant display)
   local format_flag="browse"
   local prompt_str="> "
-  local header="$browse_hdr"
+  local header_load="$browse_hdr_load"
+  local header_ready="$browse_hdr"
   local -a extra_args=()
 
   if [[ "$initial_mode" == "uproot" ]]; then
     format_flag="uproot"
     prompt_str="uproot> "
-    header="$uproot_hdr"
+    header_load="$uproot_hdr_load"
+    header_ready="$uproot_hdr"
     extra_args+=(--multi)
   fi
 
@@ -185,29 +191,34 @@ _wt_picker() {
 
   # Background: run the slow remote gather, write to file, then tell fzf
   # to reload from the file (cat is instant — no UI freeze).
+  # Include change-header to restore header after reload (fzf clears it otherwise).
   {
     wt-core unified --remote --format="$format_flag" > "$remote_cache" 2>/dev/null
+    local action_file=$(mktemp "${tmpdir}/wt-action.XXXXXX")
+    printf '%s' "reload(cat ${remote_cache})+change-header(${header_ready})" > "$action_file"
     # Brief retry loop: fzf may not be listening yet on first iteration
     local i
     for i in 1 2 3; do
       curl -s -X POST "http://localhost:${fzf_port}" \
-        -d "reload(cat ${remote_cache})" \
+        --data-binary "@${action_file}" \
         2>/dev/null && break
       sleep 0.2
     done
+    rm -f "$action_file"
   } &
   local bg_pid=$!
 
   fzf --ansi --height=100% \
     --listen="${fzf_port}" \
     --delimiter=$'\t' --with-nth=1 \
-    --header="$header" \
+    --header="$header_load" \
     --prompt="$prompt_str" \
     --preview="$preview_cmd" \
     --preview-window=right:40%:wrap:hidden \
     --expect=ctrl-o,ctrl-x \
     --bind="ctrl-p:toggle-preview" \
     --bind="tab:toggle+down" \
+    --bind="ctrl-r:reload($reload_browse)+change-header($browse_hdr)+change-prompt(> )" \
     --bind="alt-1:reload($local_browse)+change-header($browse_hdr)+change-prompt(> )" \
     --bind="alt-2:reload($reload_uproot)+change-header($uproot_hdr)+change-prompt(uproot> )" \
     --bind="alt-3:become(echo __PLANT__)" \
