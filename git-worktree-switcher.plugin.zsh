@@ -52,7 +52,7 @@ _wt_run_hook() {
   export WT_MAIN_PATH="${main_wt:-}"
   export WT_IS_NEW="$is_new"
 
-  (cd "$wt_path" && eval "$hook_cmd") || {
+  (cd "$wt_path" && eval "$hook_cmd") </dev/null || {
     echo "warning: ${hook_name} hook exited with error" >&2
   }
 }
@@ -83,10 +83,11 @@ Commands:
   wt add <branch>   Create new worktree (legacy, use wt plant)
 
 Modes (switch within picker):
-  /browse, /uproot, /plant    Slash commands
-  alt-1, alt-2, alt-3         Direct jump
-  ctrl-]                      Cycle modes
-  esc                         Back to browse
+  alt-1                       Switch to browse mode
+  alt-2                       Switch to uproot mode
+  alt-3                       Switch to plant mode
+  ctrl-]                      Cycle: browse -> uproot -> plant
+  esc                         Back to browse mode
 
 Browse keybindings:
   enter    Switch to selected worktree
@@ -187,11 +188,30 @@ _wt_picker() {
       --bind="load:reload-sync($reload_cmd)+change-header($browse_hdr_done)" \
       --bind="alt-1:reload($local_cmd)+change-header($browse_hdr_done)+change-prompt(> )" \
       --bind="alt-2:reload(wt-core unified --remote --format=uproot 2>/dev/null)+change-header($uproot_hdr)+change-prompt(uproot> )" \
-      --bind="alt-3:abort" \
+      --bind="alt-3:become(echo __PLANT__)" \
+      --bind="ctrl-]:become(echo __CYCLE__)" \
       --bind="esc:reload($local_cmd)+change-header($browse_hdr_done)+change-prompt(> )" \
       "${extra_args[@]}" > "$fzf_out"
 
   [[ -s "$fzf_out" ]] || { rm -f "$fzf_out" "$mode_file"; return; }
+
+  # Check for mode-switch signals from become() bindings
+  local first_line=$(<"$fzf_out")
+  if [[ "$first_line" == "__PLANT__" ]]; then
+    rm -f "$fzf_out" "$mode_file"
+    _wt_picker "plant"
+    return
+  fi
+  if [[ "$first_line" == "__CYCLE__" ]]; then
+    rm -f "$fzf_out" "$mode_file"
+    # Cycle: browse -> uproot -> plant -> browse
+    case "$initial_mode" in
+      browse) _wt_picker "uproot" ;;
+      uproot) _wt_picker "plant" ;;
+      *)      _wt_picker "browse" ;;
+    esac
+    return
+  fi
 
   local key=$(head -1 "$fzf_out")
 
@@ -354,6 +374,7 @@ _wt_add() {
   local open_yn
   read -r open_yn
   [[ "$open_yn" != [nN]* ]] && ${(z)WT_OPENER} "$target"
+  return 0
 }
 
 _wt_delete() {
