@@ -131,12 +131,12 @@ _wt_picker() {
   local fzf_out=$(mktemp "${tmpdir}/wt-fzf.XXXXXX")
   local local_cache=$(mktemp "${tmpdir}/wt-local.XXXXXX")
 
-  # Headers per mode (use literal UTF-8, no escape sequences — keeps curl safe)
-  local browse_hdr_load='Loading… · /uproot · /plant · enter cd · ctrl-o open · ctrl-p preview'
-  local browse_hdr='✓ · /uproot · /plant · enter cd · ctrl-o open · ctrl-p preview · ctrl-r refresh'
-  local uproot_hdr_load='Loading… · UPROOT MODE · tab select · enter confirm · esc browse'
-  local uproot_hdr='✓ · UPROOT MODE · tab select · enter confirm · esc browse · ctrl-r refresh'
-  local plant_hdr='Select branch or [new branch] · esc cancel'
+  # Headers per mode — [BRACKETS] mark the active mode
+  local browse_hdr_load='Loading…  [BROWSE]  uproot  plant  ·  enter cd · ctrl-o open · ctrl-p · ctrl-r'
+  local browse_hdr='[BROWSE]  uproot  plant  ·  enter cd · ctrl-o open · ctrl-p · ctrl-r'
+  local uproot_hdr_load='Loading…  browse  [UPROOT]  plant  ·  tab select · enter confirm · esc back · ctrl-r'
+  local uproot_hdr='browse  [UPROOT]  plant  ·  tab select · enter confirm · esc back · ctrl-r'
+  local plant_hdr='browse  uproot  [PLANT]  ·  select branch or type new · esc back'
 
   # Preview command (toggled with ctrl-p)
   local preview_cmd='wt-core unified --preview {-1} 2>/dev/null'
@@ -209,6 +209,7 @@ _wt_picker() {
   fzf --ansi --height=100% \
     --listen="${fzf_port}" \
     --delimiter=$'\t' --with-nth=1 \
+    --header-lines=1 \
     --header="$header_load" \
     --prompt="$prompt_str" \
     --preview="$preview_cmd" \

@@ -85,9 +85,14 @@ Describe "wt-core unified --local --format=browse"
     The first line of output should include "[0m"
   End
 
-  It "includes abs path as tab-delimited last field"
+  It "has a column header as the first line"
     When call wt-core unified --local --format=browse
-    The first line of output should include "$TEST_REPO"
+    The first line of output should include "BRANCH"
+  End
+
+  It "includes abs path as tab-delimited last field in data rows"
+    When call wt-core unified --local --format=browse
+    The second line of output should include "$TEST_REPO"
   End
 End
 

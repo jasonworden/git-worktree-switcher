@@ -210,13 +210,13 @@ struct ColWidths {
 
 fn compute_widths(rows: &[Row], include_verdict: bool) -> ColWidths {
     let mut w = ColWidths {
-        branch: 6, // min: "BRANCH"
-        rel: 4,    // min: "PATH"
-        tree: 5,   // min: "clean"/"dirty"
-        ahead: 2,  // min: "··"
-        remote: 2,
-        pr: 2,
-        verdict: 6, // min: "unsafe"
+        branch: 6,  // "BRANCH"
+        rel: 4,     // "PATH"
+        tree: 4,    // "TREE"
+        ahead: 5,   // "AHEAD"
+        remote: 6,  // "REMOTE"
+        pr: 2,      // "PR"
+        verdict: 7, // "VERDICT"
     };
     for r in rows {
         let blen = r.branch.len() + if r.stale { 6 } else { 0 }; // " stale"
@@ -240,6 +240,27 @@ fn compute_widths(rows: &[Row], include_verdict: bool) -> ColWidths {
 /// Pad a plain string to width, then wrap with ANSI color.
 fn colored(text: &str, color: &str, width: usize) -> String {
     format!("{color}{text:<width$}{RESET}")
+}
+
+/// Format column header row (pinned by fzf --header-lines=1).
+fn format_header(w: &ColWidths, include_verdict: bool) -> String {
+    let branch_col = colored("BRANCH", DIM, w.branch);
+    let rel_col = colored("PATH", DIM, w.rel);
+    let tree_col = colored("TREE", DIM, w.tree);
+    let ahead_col = colored("AHEAD", DIM, w.ahead);
+    let remote_col = colored("REMOTE", DIM, w.remote);
+    let pr_col = colored("PR", DIM, w.pr);
+
+    if include_verdict {
+        let verdict_col = colored("VERDICT", DIM, w.verdict);
+        format!(
+            "  {branch_col}  {rel_col}  {tree_col}  {ahead_col}  {remote_col}  {pr_col}  {verdict_col}\t."
+        )
+    } else {
+        format!(
+            "  {branch_col}  {rel_col}  {tree_col}  {ahead_col}  {remote_col}  {pr_col}\t."
+        )
+    }
 }
 
 /// Format a row for browse mode display.
@@ -384,6 +405,7 @@ fn output_rows(rows: &[Row], format: &str) {
     match format {
         "browse" => {
             let w = compute_widths(rows, false);
+            println!("{}", format_header(&w, false));
             for row in rows {
                 println!("{}", format_browse(row, &w));
             }
@@ -398,6 +420,7 @@ fn output_rows(rows: &[Row], format: &str) {
                 _ => 4,
             });
             let w = compute_widths(rows, true);
+            println!("{}", format_header(&w, true));
             for row in sorted {
                 println!("{}", format_uproot(row, &w));
             }
