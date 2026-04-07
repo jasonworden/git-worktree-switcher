@@ -97,8 +97,7 @@ The primary view. Shows all worktrees with progressive loading.
 - `tab` → toggle multi-select on highlighted item
 - `ctrl-o` → open highlighted in `$WT_OPENER` (default: `code`)
 - `ctrl-x` → delete highlighted worktree (confirmation prompt)
-- `ctrl-u` → switch to uproot mode
-- `ctrl-n` → switch to plant mode
+- Mode switching — see [Mode Switching Keybindings](#mode-switching-keybindings)
 
 **Preview pane** (fzf `--preview`): shows detail for highlighted worktree:
 - Recent commits (last 5, `git log --oneline`)
@@ -127,7 +126,7 @@ Bulk removal of stale worktrees.
 **Interaction:**
 - `tab` → toggle selection on highlighted
 - `enter` → confirm removal of all selected worktrees
-- `ctrl-b` → back to browse mode
+- `esc` → back to browse mode
 - Confirmation prompt before deletion shows summary of what will be removed
 
 **Branch cleanup:** controlled by `wt.opinionated.deleteBranch` or `--keep-branches` flag. When enabled, `git branch -D` runs for each uprooted worktree's branch (only if verdict is `safe`).
@@ -173,7 +172,7 @@ Guided worktree creation wizard.
   fix-nav         .worktrees/fix-nav      clean   —       ··       ··
   refactor-db     .worktrees/refactor-db  dirty   5       ··       ··
 ────────────────────────────────────────────────────────────────────────
-⟳ Fetching remote info...     ctrl-u uproot · ctrl-n plant · enter cd
+⟳ Fetching remote info...     /uproot · /plant · enter cd · ctrl-o open
 ```
 
 ### Phase 2: After remote check
@@ -185,7 +184,7 @@ Guided worktree creation wizard.
   fix-nav         .worktrees/fix-nav      clean   —       gone       #42 merged
   refactor-db     .worktrees/refactor-db  dirty   5       origin ✓   no PR
 ────────────────────────────────────────────────────────────────────────
-✓ Remote checks complete      ctrl-u uproot · ctrl-n plant · enter cd
+✓ Remote checks complete      /uproot · /plant · enter cd · ctrl-o open
 ```
 
 Columns are fixed-width, pre-allocated for longest expected values. The `··` → real value swap happens in a single fzf reload — no per-cell updates.
@@ -196,7 +195,7 @@ Bottom line serves dual purpose:
 1. **Loading state**: `⟳ Fetching remote info...` (yellow)
 2. **Complete state**: `✓ Remote checks complete` (green) or `— local only` (dim)
 3. **Mode indicator**: keybind hints change per mode
-4. **Uproot mode**: `⚠ UPROOT MODE` (red) with uproot-specific keybinds
+4. **Uproot mode**: `⚠ UPROOT MODE` (red) — `tab select · enter confirm · esc browse`
 
 ---
 
@@ -382,12 +381,38 @@ Both hooks receive environment variables:
 
 `--listen` requires fzf 0.30+ (released March 2022). On older versions, fall back to showing local data only with a note to upgrade fzf for remote features.
 
+### Mode Switching Keybindings
+
+Three complementary input methods — all active simultaneously:
+
+| Method | Browse | Uproot | Plant | Back to Browse |
+|--------|--------|--------|-------|----------------|
+| **Slash commands** | `/browse` | `/uproot` | `/plant` | `/browse` or `esc` |
+| **Cycle key** | `ctrl-]` | `ctrl-]` | `ctrl-]` | `ctrl-]` (wraps) |
+| **Direct jump** | `alt-1` | `alt-2` | `alt-3` | `alt-1` or `esc` |
+
+`esc` always returns to browse mode from any other mode.
+
+Status bar hints show slash commands (most discoverable). Power users discover cycle/alt shortcuts over time.
+
+**Slash command implementation:** fzf's `--bind 'change:...'` watches the query. When the query matches `/uproot`, `/plant`, or `/browse`, it triggers the mode switch and clears the query. This piggybacks on fzf's existing input without consuming a keybinding.
+
 ### Mode Switching via fzf Bindings
 
 ```
---bind 'ctrl-u:change-header(...)+change-prompt(uproot> )+reload(...)'
---bind 'ctrl-n:change-header(...)+change-prompt(plant> )+reload(...)'
---bind 'ctrl-b:change-header(...)+change-prompt(> )+reload(...)'
+# Slash commands (via change event + transform)
+--bind 'change:transform:if [[ {q} == "/uproot" ]]; then echo "change-header(...)+change-prompt(uproot> )+reload(...)"; fi'
+
+# Cycle key
+--bind 'ctrl-]:transform:...'  # cycles browse→uproot→plant→browse
+
+# Direct jump
+--bind 'alt-1:change-header(...)+change-prompt(> )+reload(...)'
+--bind 'alt-2:change-header(...)+change-prompt(uproot> )+reload(...)'
+--bind 'alt-3:change-header(...)+change-prompt(plant> )+reload(...)'
+
+# Escape returns to browse
+--bind 'esc:change-header(...)+change-prompt(> )+reload(...)'
 ```
 
 Each mode switch triggers a reload with mode-appropriate data (e.g., uproot adds verdict column, plant shows available branches).
