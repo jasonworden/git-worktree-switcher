@@ -115,14 +115,15 @@ make build              # or: npm run build          (debug)
 make build-release      # or: npm run build:release  (optimized)
 ```
 
-To build and load the plugin into your current shell in one shot:
+To build and load the plugin into your current shell:
 
 ```zsh
-eval "$(make -s go)"                    # from repo root or any worktree
-eval "$(make -s -C ~/code/git-worktree-switcher go)"  # from anywhere
+source dev.sh     # one-time: loads the wt-dev function
+wt-dev            # rebuild + reload (auto-detects worktree from PWD)
+wt-dev /path/to/worktree  # or specify explicitly
 ```
 
-This compiles `wt-core`, adds it to `PATH`, and sources the plugin — ready to test immediately.
+`wt-dev` compiles `wt-core`, adds it to `PATH`, and sources the plugin — ready to test immediately. Run it again after any code change.
 
 #### Prerequisites for development
 

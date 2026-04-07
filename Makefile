@@ -32,10 +32,8 @@ build-release: ## Build wt-core (release, optimized)
 	cd $(RUST) && cargo build --release
 
 # ── Dev reload ───────────────────────────────────────────────────
-go: ## Build + print eval-able shell to load plugin (use: eval "$(make -s go)")
-	@cd $(RUST) && cargo build --quiet
-	@printf 'export PATH="%s:$$PATH"\n' "$(RUST)/target/debug"
-	@printf 'source %s\n' "$(ROOT)git-worktree-switcher.plugin.zsh"
+go: ## Print eval-able shell to load dev.sh + wt-dev (use: eval "$(make -s go)")
+	@printf 'source %sdev.sh && wt-dev %s\n' "$(ROOT)" "$(ROOT)"
 
 # ── Fix ──────────────────────────────────────────────────────────
 fix: ## Auto-fix formatting and clippy suggestions
