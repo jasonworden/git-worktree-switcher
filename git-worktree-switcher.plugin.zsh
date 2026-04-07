@@ -1,8 +1,8 @@
-# git-worktree-switcher - quickly switch between git worktrees using fzf
+# git-worktree-switcher - unified worktree manager using fzf
 # Thin zsh wrapper around the wt-core Rust binary.
 #
-# The anonymous function wrapper + emulate -LR zsh ensures that sourcing this
-# file is immune to the user's shell options (xtrace, err_exit, etc.).
+# Three modes: browse (default), uproot (cleanup), plant (create).
+# Progressive loading: local data instant, remote enriched via fzf --listen.
 
 () {
 emulate -LR zsh
@@ -10,7 +10,7 @@ emulate -LR zsh
 # Editor used by ctrl-o in the fzf picker (supports multi-word commands)
 : ${WT_OPENER:=code}
 
-# Directory containing this file (for reinstall hints when wt-core is outdated)
+# Directory containing this file (for reinstall hints)
 : ${_wt_plugin_dir:="${${(%):-%x}:A:h}"}
 
 # Verify wt-core binary is available
@@ -20,110 +20,470 @@ if ! command -v wt-core &>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
-# wt clean
+# Hooks
 # ---------------------------------------------------------------------------
-_wt_clean() {
-  { set +x } 2>/dev/null   # silence even the trace of set +x
+_wt_run_hook() {
+  { set +x } 2>/dev/null
+  emulate -LR zsh
+  local hook_name="$1" wt_path="$2" wt_branch="$3" is_new="$4"
+  local main_wt
+  main_wt=$(wt-core main-worktree 2>/dev/null)
+
+  # git config override takes priority
+  local hook_cmd
+  hook_cmd=$(git config --get "wt.hook.${hook_name}" 2>/dev/null)
+
+  if [[ -z "$hook_cmd" ]]; then
+    # Fall back to .wt/hooks/<hook_name>.sh
+    local hook_file
+    if [[ -n "$main_wt" ]]; then
+      hook_file="${main_wt}/.wt/hooks/${hook_name}.sh"
+    fi
+    if [[ -x "$hook_file" ]]; then
+      hook_cmd="$hook_file"
+    elif [[ -f "$hook_file" ]]; then
+      hook_cmd="sh $hook_file"
+    fi
+  fi
+
+  [[ -z "$hook_cmd" ]] && return 0
+
+  export WT_BRANCH="$wt_branch"
+  export WT_PATH="$wt_path"
+  export WT_MAIN_PATH="${main_wt:-}"
+  export WT_IS_NEW="$is_new"
+
+  (cd "$wt_path" && eval "$hook_cmd") || {
+    echo "warning: ${hook_name} hook exited with error" >&2
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Format TSV into fzf display lines
+# ---------------------------------------------------------------------------
+_wt_format_browse() {
+  { set +x } 2>/dev/null
+  emulate -LR zsh
+  local raw="$1"
+  local c_green=$'\033[32m' c_yellow=$'\033[33m' c_red=$'\033[31m'
+  local c_dim=$'\033[2m' c_bold=$'\033[1m' c_reset=$'\033[0m'
+  local c_cyan=$'\033[36m'
+
+  local branch rel abs tree ahead remote pr verdict is_main
+  while IFS=$'\t' read -r branch rel abs tree ahead remote pr verdict is_main; do
+    local indicator=" "
+    [[ "$is_main" == "true" ]] && indicator="${c_green}\u25cf${c_reset}"
+
+    local branch_col
+    if [[ "$is_main" == "true" ]]; then
+      branch_col="${c_green}${branch}${c_reset}"
+    else
+      branch_col="${c_cyan}${branch}${c_reset}"
+    fi
+
+    local tree_col
+    if [[ "$tree" == "clean" ]]; then
+      tree_col="${c_green}clean${c_reset}"
+    else
+      tree_col="${c_red}dirty${c_reset}"
+    fi
+
+    local ahead_col
+    if [[ "$ahead" == $'\u2014' || "$ahead" == "—" ]]; then
+      ahead_col="${c_dim}\u2014${c_reset}"
+    else
+      ahead_col="${c_yellow}${ahead}${c_reset}"
+    fi
+
+    local remote_col
+    case "$remote" in
+      *gone*)    remote_col="${c_red}gone${c_reset}" ;;
+      *origin*)  remote_col="${c_green}origin \u2713${c_reset}" ;;
+      "··")      remote_col="${c_dim}\u00b7\u00b7${c_reset}" ;;
+      *)         remote_col="${c_dim}\u2014${c_reset}" ;;
+    esac
+
+    local pr_col
+    case "$pr" in
+      *merged*)  pr_col="${c_green}${pr}${c_reset}" ;;
+      "··")      pr_col="${c_dim}\u00b7\u00b7${c_reset}" ;;
+      *)         pr_col="${c_dim}${pr}${c_reset}" ;;
+    esac
+
+    printf "%s %-20s %-24s %-7s %-7s %-12s %s\t%s\n" \
+      "$indicator" "$branch_col" "${c_dim}${rel}${c_reset}" \
+      "$tree_col" "$ahead_col" "$remote_col" "$pr_col" "$abs"
+  done <<< "$raw"
+}
+
+_wt_format_uproot() {
+  { set +x } 2>/dev/null
+  emulate -LR zsh
+  local raw="$1"
+  local c_green=$'\033[32m' c_yellow=$'\033[33m' c_red=$'\033[31m'
+  local c_dim=$'\033[2m' c_bold=$'\033[1m' c_reset=$'\033[0m'
+  local c_cyan=$'\033[36m'
+
+  local branch rel abs tree ahead remote pr verdict is_main
+  while IFS=$'\t' read -r branch rel abs tree ahead remote pr verdict is_main; do
+    local indicator=" "
+    local verdict_col
+
+    if [[ "$is_main" == "true" ]]; then
+      # Grayed out, not selectable
+      printf "${c_dim}  %-20s %-24s %-7s %-7s %-12s %-14s pinned${c_reset}\t%s\n" \
+        "$branch" "$rel" "$tree" "$ahead" "$remote" "$pr" "$abs"
+      continue
+    fi
+
+    case "$verdict" in
+      safe)    verdict_col="${c_green}safe \u2713${c_reset}" ;;
+      keep)    verdict_col="${c_yellow}keep${c_reset}" ;;
+      unsafe)  verdict_col="${c_red}unsafe${c_reset}" ;;
+      pending) verdict_col="${c_dim}...${c_reset}" ;;
+      *)       verdict_col="${c_dim}${verdict}${c_reset}" ;;
+    esac
+
+    printf "  %-20s %-24s %-7s %-7s %-12s %-14s %s\t%s\n" \
+      "${c_cyan}${branch}${c_reset}" "${c_dim}${rel}${c_reset}" \
+      "$(if [[ $tree == clean ]]; then echo "${c_green}clean${c_reset}"; else echo "${c_red}dirty${c_reset}"; fi)" \
+      "$(if [[ "$ahead" == $'\u2014' || "$ahead" == "—" ]]; then echo "${c_dim}\u2014${c_reset}"; else echo "${c_yellow}${ahead}${c_reset}"; fi)" \
+      "$(case $remote in *gone*) echo "${c_red}gone${c_reset}";; *origin*) echo "${c_green}origin \u2713${c_reset}";; "··") echo "${c_dim}\u00b7\u00b7${c_reset}";; *) echo "${c_dim}\u2014${c_reset}";; esac)" \
+      "$(case $pr in *merged*) echo "${c_green}${pr}${c_reset}";; "··") echo "${c_dim}\u00b7\u00b7${c_reset}";; *) echo "${c_dim}${pr}${c_reset}";; esac)" \
+      "$verdict_col" "$abs"
+  done <<< "$raw"
+}
+
+# ---------------------------------------------------------------------------
+# wt (main entrypoint)
+# ---------------------------------------------------------------------------
+wt() {
+  { set +x } 2>/dev/null
   emulate -LR zsh
 
-  local keep_branches=false
-  if [[ "$1" == "--keep-branches" ]] || [[ "${WT_CLEAN_KEEP_BRANCHES:-0}" == "1" ]]; then
-    keep_branches=true
-  fi
-
-  local gh_flag=""
-  if wt-core gh-available 2>/dev/null; then
-    gh_flag="--gh"
-  else
-    echo "tip: brew install gh for PR merge detection" >&2
-  fi
-
-  echo "Fetching latest remote state..."
-
-  local raw
-  raw=$(wt-core clean-check $gh_flag 2>/dev/null)
-
-  if [[ -z "$raw" ]]; then
-    echo "No worktrees to clean (only main worktree exists)."
+  if [[ "$1" == "--version" || "$1" == "-v" || "$1" == "-V" ]]; then
+    wt-core --version 2>/dev/null || {
+      echo "git-worktree-switcher: wt-core too old. Reinstall from your clone." >&2
+      return 1
+    }
     return
   fi
 
-  # --- Build fzf display lines (all in-process, no subshell) ---
-  local c_green=$'\033[32m' c_yellow=$'\033[33m' c_red=$'\033[31m'
-  local c_dim=$'\033[2m' c_bold=$'\033[1m' c_reset=$'\033[0m'
-  local safe_char=$'\u2713' warn_char=$'\u26a0'
+  if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    cat <<'EOF'
+Usage: wt [command] [args]
 
-  local -a fzf_lines
-  local verdict branch wt_path ev_pr ev_ahead ev_tree ev_remote
-  local max_bw=0 max_pr=9 max_ah=5 max_tr=8 max_rm=6
+Commands:
+  wt                Open worktree picker (browse mode)
+  wt uproot         Open in uproot mode (bulk cleanup)
+  wt clean          Alias for wt uproot
+  wt plant          Open in plant mode (create worktree)
+  wt add <branch>   Create new worktree (legacy, use wt plant)
 
-  while IFS=$'\t' read -r verdict branch wt_path ev_pr ev_ahead ev_tree ev_remote; do
-    (( ${#branch} > max_bw )) && max_bw=${#branch}
-    (( ${#ev_pr} > max_pr )) && max_pr=${#ev_pr}
-    (( ${#ev_ahead} > max_ah )) && max_ah=${#ev_ahead}
-    (( ${#ev_tree} > max_tr )) && max_tr=${#ev_tree}
-    (( ${#ev_remote} > max_rm )) && max_rm=${#ev_remote}
-  done <<< "$raw"
+Modes (switch within picker):
+  /browse, /uproot, /plant    Slash commands
+  alt-1, alt-2, alt-3         Direct jump
+  ctrl-]                      Cycle modes
+  esc                         Back to browse
 
-  local icon disp pad cell
-  while IFS=$'\t' read -r verdict branch wt_path ev_pr ev_ahead ev_tree ev_remote; do
-    if [[ "$verdict" == "safe" ]]; then
-      icon="${c_green}${safe_char}${c_reset}"
-    else
-      icon="${c_yellow}${warn_char}${c_reset}"
+Browse keybindings:
+  enter    Switch to selected worktree (or open selected in editor)
+  tab      Toggle multi-select
+  ctrl-o   Open in editor ($WT_OPENER)
+  ctrl-x   Delete worktree (with confirmation)
+EOF
+    return
+  fi
+
+  if ! git rev-parse --git-dir &>/dev/null; then
+    echo "Not a git repository" >&2
+    return 1
+  fi
+
+  # --- Subcommand dispatch ---
+  local initial_mode="browse"
+
+  case "$1" in
+    uproot|clean) initial_mode="uproot"; shift ;;
+    plant)        initial_mode="plant"; shift ;;
+    add)          _wt_add "${@:2}"; return ;;
+    "")           ;; # default browse
+    *)            echo "wt: unknown command '$1'. Run wt --help." >&2; return 1 ;;
+  esac
+
+  _wt_picker "$initial_mode" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Unified fzf picker
+# ---------------------------------------------------------------------------
+_wt_picker() {
+  { set +x } 2>/dev/null
+  emulate -LR zsh
+  local initial_mode="${1:-browse}"
+  local keep_branches_flag="$2"
+
+  # Get initial local data
+  local raw_local
+  raw_local=$(wt-core unified --local 2>/dev/null)
+  [[ -z "$raw_local" ]] && return
+
+  # Check fzf version for --listen support
+  local fzf_version
+  fzf_version=$(fzf --version 2>/dev/null | head -1 | sed 's/[^0-9.].*//; s/\..*//')
+  local fzf_minor
+  fzf_minor=$(fzf --version 2>/dev/null | head -1 | sed 's/[^0-9.].*//; s/^[0-9]*\.//; s/\..*//')
+
+  local has_listen=false
+  if (( fzf_version > 0 )) || (( fzf_version == 0 && fzf_minor >= 30 )); then
+    has_listen=true
+  fi
+
+  # Temp files for data exchange
+  local tmpdir="${TMPDIR:-/tmp}"
+  local data_file=$(mktemp "${tmpdir}/wt-data.XXXXXX")
+  local remote_file=$(mktemp "${tmpdir}/wt-remote.XXXXXX")
+  local fzf_out=$(mktemp "${tmpdir}/wt-fzf.XXXXXX")
+  local mode_file=$(mktemp "${tmpdir}/wt-mode.XXXXXX")
+  echo "$initial_mode" > "$mode_file"
+
+  # Format initial data based on mode
+  local formatted
+  if [[ "$initial_mode" == "uproot" ]]; then
+    formatted=$(_wt_format_uproot "$raw_local")
+  elif [[ "$initial_mode" == "plant" ]]; then
+    formatted=$(wt-core unified --branches 2>/dev/null)
+  else
+    formatted=$(_wt_format_browse "$raw_local")
+  fi
+
+  # Find a free port for fzf --listen
+  local listen_port=""
+  local listen_arg=""
+  if $has_listen; then
+    listen_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || echo "")
+    if [[ -n "$listen_port" ]]; then
+      listen_arg="--listen=localhost:${listen_port}"
+    fi
+  fi
+
+  # Background: fetch remote data and reload fzf
+  local remote_pid=""
+  if [[ -n "$listen_port" && "$initial_mode" != "plant" ]]; then
+    (
+      wt-core unified --remote 2>/dev/null > "$remote_file"
+      if [[ -s "$remote_file" ]]; then
+        local current_mode
+        current_mode=$(<"$mode_file")
+        local new_formatted
+        if [[ "$current_mode" == "uproot" ]]; then
+          new_formatted=$(_wt_format_uproot "$(<"$remote_file")")
+        else
+          new_formatted=$(_wt_format_browse "$(<"$remote_file")")
+        fi
+        # URL-encode the reload data
+        local encoded
+        encoded=$(printf '%s\n' "$new_formatted" | sed 's/%/%25/g; s/ /%20/g; s/\t/%09/g')
+        # Use fzf's reload action via HTTP
+        curl -s "localhost:${listen_port}" -d "reload(wt-core unified --remote 2>/dev/null | _wt_format_for_mode)" &>/dev/null 2>&1 || true
+      fi
+    ) &
+    remote_pid=$!
+  fi
+
+  # Determine initial header and prompt
+  local header prompt
+  case "$initial_mode" in
+    browse)
+      header=$'\033[33m\u21bb Fetching remote info...\033[0m     /uproot \u00b7 /plant \u00b7 enter cd \u00b7 ctrl-o open'
+      prompt="> "
+      ;;
+    uproot)
+      header=$'\033[31m\u26a0 UPROOT MODE\033[0m  tab select \u00b7 enter confirm \u00b7 esc browse'
+      prompt="uproot> "
+      ;;
+    plant)
+      header="Select branch or [new branch]  \u00b7 esc browse"
+      prompt="plant> "
+      ;;
+  esac
+
+  # Preview command
+  local preview_cmd='wt-core unified --preview {-1} 2>/dev/null'
+
+  # Build fzf arguments
+  local -a fzf_args=(
+    --ansi
+    --height=60%
+    --delimiter=$'\t'
+    --with-nth=1
+    --header="$header"
+    --prompt="$prompt"
+    --preview="$preview_cmd"
+    --preview-window=right:40%:wrap
+    --expect=ctrl-o,ctrl-x
+    --bind="tab:toggle+down"
+  )
+
+  if [[ -n "$listen_arg" ]]; then
+    fzf_args+=("$listen_arg")
+  fi
+
+  if [[ "$initial_mode" == "uproot" ]]; then
+    fzf_args+=(--multi)
+  elif [[ "$initial_mode" == "plant" ]]; then
+    # Plant mode: no preview, simple list
+    fzf_args=(
+      --ansi
+      --height=40%
+      --header="$header"
+      --prompt="$prompt"
+    )
+  fi
+
+  # Run fzf
+  printf '%s\n' "${(@f)formatted}" | fzf "${fzf_args[@]}" > "$fzf_out"
+
+  # Kill background fetch if still running
+  [[ -n "$remote_pid" ]] && kill "$remote_pid" 2>/dev/null; wait "$remote_pid" 2>/dev/null
+
+  # Process results
+  [[ -s "$fzf_out" ]] || {
+    rm -f "$data_file" "$remote_file" "$fzf_out" "$mode_file"
+    return
+  }
+
+  local key selection abs_path
+  key=$(head -1 "$fzf_out")
+
+  if [[ "$initial_mode" == "plant" ]]; then
+    # Plant mode: selection is the branch name
+    selection=$(tail -1 "$fzf_out")
+    rm -f "$data_file" "$remote_file" "$fzf_out" "$mode_file"
+    _wt_handle_plant "$selection"
+    return
+  fi
+
+  if [[ "$initial_mode" == "uproot" ]]; then
+    # Uproot mode: multi-selection
+    local -a selected_lines
+    selected_lines=("${(@f)$(tail -n +2 "$fzf_out")}")
+    rm -f "$data_file" "$remote_file" "$fzf_out" "$mode_file"
+    _wt_handle_uproot "${selected_lines[@]}"
+    return
+  fi
+
+  # Browse mode
+  selection=$(tail -1 "$fzf_out")
+  rm -f "$data_file" "$remote_file" "$fzf_out" "$mode_file"
+  [[ -n "$selection" ]] || return
+
+  abs_path=$(echo "$selection" | awk -F'\t' '{print $NF}')
+  [[ -n "$abs_path" ]] || return
+
+  case "$key" in
+    ctrl-o) ${(z)WT_OPENER} "$abs_path" ;;
+    ctrl-x) _wt_delete "$abs_path" ;;
+    *)
+      cd "$abs_path"
+      # Run post-enter hook
+      local branch
+      branch=$(git -C "$abs_path" rev-parse --abbrev-ref HEAD 2>/dev/null)
+      _wt_run_hook "post-enter" "$abs_path" "${branch:-unknown}" "false"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Plant handler
+# ---------------------------------------------------------------------------
+_wt_handle_plant() {
+  { set +x } 2>/dev/null
+  emulate -LR zsh
+  local selection="$1"
+
+  if [[ "$selection" == "[new branch]" ]]; then
+    printf "Branch name: "
+    local branch_name
+    read -r branch_name
+    [[ -n "$branch_name" ]] || return
+
+    # Branch prefix enforcement (opinionated mode)
+    local opinionated
+    opinionated=$(git config --get wt.opinionated.branchPrefix 2>/dev/null)
+    if [[ "$opinionated" == "true" ]]; then
+      if [[ "$branch_name" != feat/* && "$branch_name" != fix/* && "$branch_name" != chore/* ]]; then
+        echo "Opinionated mode: branch must start with feat/, fix/, or chore/"
+        printf "Branch name: "
+        read -r branch_name
+        [[ -n "$branch_name" ]] || return
+      fi
     fi
 
-    disp="${icon} $(printf "${c_bold}%-${max_bw}s${c_reset}" "$branch")"
+    selection="$branch_name"
+  fi
 
-    # PR merged (optional)
-    cell=""; [[ -n "$ev_pr" ]] && cell="${c_green}${ev_pr}${c_reset}"
-    pad=$(( max_pr - ${#ev_pr} )); (( pad < 0 )) && pad=0
-    disp+="  ${cell}$(printf '%*s' $pad '')"
+  local target
+  target=$(wt-core add "$selection" 2>&1)
+  if [[ $? -ne 0 ]]; then
+    echo "Failed to create worktree: $target" >&2
+    return 1
+  fi
 
-    # commits ahead (optional)
-    cell=""; [[ -n "$ev_ahead" ]] && cell="${c_yellow}${ev_ahead}${c_reset}"
-    pad=$(( max_ah - ${#ev_ahead} )); (( pad < 0 )) && pad=0
-    disp+="  ${cell}$(printf '%*s' $pad '')"
+  echo "Created worktree: $selection -> $target"
 
-    # worktree clean / dirty
-    if [[ "$ev_tree" == clean ]]; then cell="${c_dim}${ev_tree}${c_reset}"
-    else cell="${c_red}${ev_tree}${c_reset}"; fi
-    pad=$(( max_tr - ${#ev_tree} )); (( pad < 0 )) && pad=0
-    disp+="  ${cell}$(printf '%*s' $pad '')"
+  # Run post-plant hook
+  _wt_run_hook "post-plant" "$target" "$selection" "true"
 
-    # remote gone (optional, last)
-    cell=""; [[ -n "$ev_remote" ]] && cell="${c_green}${ev_remote}${c_reset}"
-    pad=$(( max_rm - ${#ev_remote} )); (( pad < 0 )) && pad=0
-    disp+="  ${cell}$(printf '%*s' $pad '')"
+  # Auto-cd (check config)
+  local auto_cd
+  auto_cd=$(git config --get wt.opinionated.autoCd 2>/dev/null)
+  if [[ "$auto_cd" == "true" ]]; then
+    cd "$target"
+  else
+    printf "cd into %s? [Y/n] " "$target"
+    local yn
+    read -r yn
+    if [[ "$yn" != [nN]* ]]; then
+      cd "$target"
+    fi
+  fi
+}
 
-    fzf_lines+=("${disp}"$'\t'"${branch}"$'\t'"${wt_path}")
-  done <<< "$raw"
+# ---------------------------------------------------------------------------
+# Uproot handler
+# ---------------------------------------------------------------------------
+_wt_handle_uproot() {
+  { set +x } 2>/dev/null
+  emulate -LR zsh
+  local -a lines=("$@")
 
-  # --- fzf (output to tmpfile, not $()) ---
-  local hdr
-  hdr=$(printf "  %-${max_bw}s  %-${max_pr}s  %-${max_ah}s  %-${max_tr}s  %-${max_rm}s  │ tab:select · enter:delete · esc:cancel" "branch" "PR merged" "ahead" "tree" "remote")
+  [[ ${#lines[@]} -gt 0 ]] || return
 
-  local fzf_out
-  fzf_out=$(mktemp "${TMPDIR:-/tmp}/wt-clean.XXXXXX") || return
-  printf '%s\n' "${fzf_lines[@]}" | fzf --multi --ansi --height=40% \
-    --delimiter='\t' --with-nth=1 --header="$hdr" >"$fzf_out"
+  local keep_branches=false
+  if [[ "${WT_CLEAN_KEEP_BRANCHES:-0}" == "1" ]]; then
+    keep_branches=true
+  fi
 
-  [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return }
-
-  local selected
-  selected=$(<"$fzf_out")
-  rm -f "$fzf_out"
-  [[ -n "$selected" ]] || return
+  local delete_branch
+  delete_branch=$(git config --get wt.opinionated.deleteBranch 2>/dev/null)
+  if [[ "$delete_branch" == "true" ]]; then
+    keep_branches=false
+  fi
 
   local -a paths branches
-  local abs_path branch_name line
-  while IFS= read -r line; do
-    branch_name="${line#*$'\t'}"
-    branch_name="${branch_name%%$'\t'*}"
-    abs_path="${line##*$'\t'}"
+  local line abs_path branch_name
+  for line in "${lines[@]}"; do
+    [[ -n "$line" ]] || continue
+    abs_path=$(echo "$line" | awk -F'\t' '{print $NF}')
+    # Extract branch from the formatted line (first non-space word)
+    branch_name=$(echo "$line" | sed 's/^[[:space:]]*//' | awk '{print $1}' | sed $'s/\033\\[[0-9;]*m//g')
+    [[ -n "$abs_path" && -n "$branch_name" ]] || continue
     paths+=("$abs_path")
     branches+=("$branch_name")
-  done <<< "$selected"
+  done
+
+  [[ ${#paths[@]} -gt 0 ]] || return
 
   local branch_msg=""
   if ! $keep_branches; then
@@ -138,7 +498,8 @@ _wt_clean() {
 
   local main_wt
   main_wt=$(wt-core main-worktree)
-  local wt_path branch
+
+  local i wt_path branch
   for i in {1..${#paths[@]}}; do
     wt_path="${paths[$i]}"
     branch="${branches[$i]}"
@@ -151,13 +512,13 @@ _wt_clean() {
         git branch -D "$branch" 2>/dev/null && echo "Deleted branch: $branch"
       fi
     else
-      echo "Failed to remove worktree: $branch (may have changes -- use git worktree remove --force)" >&2
+      echo "Failed to remove worktree: $branch" >&2
     fi
   done
 }
 
 # ---------------------------------------------------------------------------
-# wt add / wt delete
+# Legacy helpers (kept for backward compat)
 # ---------------------------------------------------------------------------
 _wt_add() {
   { set +x } 2>/dev/null
@@ -173,6 +534,9 @@ _wt_add() {
   if [[ $? -ne 0 ]]; then
     return 1
   fi
+
+  # Run post-plant hook
+  _wt_run_hook "post-plant" "$target" "$1" "true"
 
   cd "$target"
 
@@ -201,131 +565,6 @@ _wt_delete() {
 }
 
 # ---------------------------------------------------------------------------
-# wt (main entrypoint)
-# ---------------------------------------------------------------------------
-wt() {
-  { set +x } 2>/dev/null
-  emulate -LR zsh
-
-  if [[ "$1" == "--version" || "$1" == "-v" || "$1" == "-V" ]]; then
-    if ! wt-core --version 2>/dev/null; then
-      echo "git-worktree-switcher: wt-core on PATH is too old (no --version). Reinstall from your clone:" >&2
-      if [[ -d "${_wt_plugin_dir}/rust" ]]; then
-        echo "  cd ${_wt_plugin_dir}/rust && cargo install --path . --force" >&2
-      else
-        echo "  cd rust && cargo install --path . --force" >&2
-      fi
-      return 1
-    fi
-    return
-  fi
-
-  if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    cat <<'EOF'
-Usage: wt [command] [args]
-
-Commands:
-  wt                Open fzf worktree picker
-  wt add <branch>   Create new worktree (and branch if needed)
-  wt clean          Review and batch-delete stale worktrees
-
-fzf keybindings:
-  enter    Switch to selected worktree
-  ctrl-a   Create new worktree
-  ctrl-o   Open in editor ($WT_OPENER, default: code)
-  ctrl-x   Delete worktree (with confirmation)
-  ctrl-g   Open cleanup helper (wt clean)
-EOF
-    return
-  fi
-
-  if ! git rev-parse --git-dir &>/dev/null; then
-    echo "Not a git repository" >&2
-    return 1
-  fi
-
-  # --- Subcommand dispatch ---
-
-  if [[ "$1" == "clean" ]]; then
-    _wt_clean "${@:2}"
-    return
-  fi
-
-  if [[ "$1" == "add" ]]; then
-    _wt_add "${@:2}"
-    return
-  fi
-
-  if [[ -n "$1" ]]; then
-    echo "wt: unknown command '$1'. Run wt for the picker, or wt --help." >&2
-    return 1
-  fi
-
-  # --- Interactive fzf picker ---
-
-  local folder=$'\uf07c'       # nerd font folder icon
-  local branch_icon=$'\ue725'  # nerd font branch icon
-
-  local raw ec=""
-  raw=$(wt-core picker 2>&1) || ec=$?
-  if [[ -n "$ec" || "$raw" == *"unrecognized subcommand"* ]]; then
-    echo "git-worktree-switcher: wt-core on PATH is too old (missing \"picker\"). Reinstall from your clone:" >&2
-    if [[ -d "${_wt_plugin_dir}/rust" ]]; then
-      echo "  cd ${_wt_plugin_dir}/rust && cargo install --path . --force" >&2
-    else
-      echo "  cd rust && cargo install --path . --force" >&2
-    fi
-    [[ "$raw" != *"unrecognized subcommand"* && -n "$raw" ]] && echo "$raw" >&2
-    return 1
-  fi
-  [[ -z "$raw" ]] && return
-
-  local safe_icon=$'\u2713'
-  local warn_icon=$'\u26a0'
-  local main_abs=""
-  local -a fzf_lines
-
-  while IFS=$'\t' read -r branch rel abs stale; do
-    [[ "$rel" == "." ]] && main_abs="$abs"
-    local path_display="$rel"
-    [[ "$rel" == "." ]] && path_display="${main_abs:t}"
-    local status_icon=""
-    [[ "$stale" == "safe" ]] && status_icon=" $safe_icon"
-    [[ "$stale" == "warn" ]] && status_icon=" $warn_icon"
-    fzf_lines+=("$(printf "%s %s  %s %s%s\t%s" \
-      "$folder" "$path_display" "$branch_icon" "$branch" "$status_icon" "$abs")")
-  done <<< "$raw"
-
-  local fzf_out
-  fzf_out=$(mktemp "${TMPDIR:-/tmp}/wt-fzf.XXXXXX") || return
-  printf '%s\n' "${fzf_lines[@]}" | fzf --height=40% --delimiter='\t' --with-nth=1 \
-    --header="enter:switch │ ctrl-a:add │ ctrl-o:open │ ctrl-x:delete │ ctrl-g:clean" \
-    --expect=ctrl-o,ctrl-x,ctrl-a,ctrl-g >"$fzf_out"
-
-  [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return }
-
-  local key=$(head -1 "$fzf_out")
-  local selection=$(tail -1 "$fzf_out")
-  rm -f "$fzf_out"
-  [[ -n "$selection" ]] || return
-
-  local abs_path=$(echo "$selection" | awk -F'\t' '{print $2}')
-
-  case "$key" in
-    ctrl-a)
-      printf "Branch name: "
-      local branch_name
-      read -r branch_name
-      [[ -n "$branch_name" ]] && _wt_add "$branch_name"
-      ;;
-    ctrl-o) ${(z)WT_OPENER} "$abs_path" ;;
-    ctrl-x) _wt_delete "$abs_path" ;;
-    ctrl-g) _wt_clean ;;
-    *)      cd "$abs_path" ;;
-  esac
-}
-
-# ---------------------------------------------------------------------------
 # Tab completion
 # ---------------------------------------------------------------------------
 _wt() {
@@ -335,7 +574,7 @@ _wt() {
   local branch_icon=$'\ue725'
   local branch rel abs
 
-  if [[ "$words[2]" == "add" ]]; then
+  if [[ "$words[2]" == "add" || "$words[2]" == "plant" ]]; then
     local -a branches
     branches=(${(f)"$(wt-core completions 2>/dev/null)"})
     _describe 'branch' branches
@@ -343,7 +582,12 @@ _wt() {
   fi
 
   local -a wt_descs subcmds
-  subcmds=("add:Create a new worktree" "clean:Review and delete stale worktrees")
+  subcmds=(
+    "add:Create a new worktree (legacy)"
+    "plant:Create a new worktree"
+    "uproot:Review and bulk-delete stale worktrees"
+    "clean:Alias for uproot"
+  )
   while IFS=$'\t' read -r branch rel abs; do
     wt_descs+=("${rel//:/\\:}:$branch_icon $branch")
   done < <(wt-core entries 2>/dev/null)
