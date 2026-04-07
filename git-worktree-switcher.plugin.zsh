@@ -432,10 +432,19 @@ _wt() {
 }
 compdef _wt wt
 
-# Dev helper: rebuild wt-core and reload the plugin from source.
-# Works from anywhere — resolves the repo from this file's location.
+# Dev helper: rebuild wt-core and reload the plugin.
+# If you're inside a worktree of this repo, builds from that worktree.
+# Otherwise falls back to wherever the plugin was originally sourced from.
 wt-dev() {
-  local root="$_WT_PLUGIN_DIR"
+  local root
+  local git_root
+  git_root=$(git rev-parse --show-toplevel 2>/dev/null)
+  if [[ -n "$git_root" && -f "$git_root/rust/src/main.rs" ]]; then
+    root="$git_root"
+  else
+    root="$_WT_PLUGIN_DIR"
+  fi
+  echo "Building from: $root"
   (cd "$root/rust" && cargo build --quiet) || return 1
   export PATH="$root/rust/target/debug:$PATH"
   source "$root/git-worktree-switcher.plugin.zsh"
