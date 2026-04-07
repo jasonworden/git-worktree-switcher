@@ -94,23 +94,37 @@ wt add <tab>    # tab-complete branch names
 
 ### Local development
 
-```zsh
-# Build the binary
-cd rust && cargo build
-
-# Add to PATH
-export PATH="$PWD/target/debug:$PATH"
-
-# Source the plugin
-source ~/path/to/git-worktree-switcher/git-worktree-switcher.plugin.zsh
-```
-
-### Running tests
+All dev commands work from the repo root (or any worktree). Use `make` or `npm run`:
 
 ```zsh
-# Rust unit tests
-cd rust && cargo test
+# Run everything — format check, lint, tests
+make check              # or: npm run check
 
-# Shell integration tests (requires shellspec)
-shellspec
+# Just tests
+make test               # or: npm test
+make test-rust          # or: npm run test:rust    (cargo test only)
+make test-shell         # or: npm run test:shell   (shellspec only)
+
+# Lint / format
+make fmt                # or: npm run fmt     (check formatting)
+make lint               # or: npm run lint    (clippy)
+make fix                # or: npm run fix     (auto-fix both)
+
+# Build
+make build              # or: npm run build          (debug)
+make build-release      # or: npm run build:release  (optimized)
 ```
+
+To build and load the plugin into your current shell in one shot:
+
+```zsh
+eval "$(npm run --silent go)"
+```
+
+This compiles `wt-core`, adds it to `PATH`, and sources the plugin — ready to test immediately.
+
+#### Prerequisites for development
+
+- [Rust toolchain](https://rustup.rs/) (rustfmt, clippy included)
+- [ShellSpec](https://shellspec.info/) for shell integration tests
+- [fzf](https://github.com/junegunn/fzf) for the picker

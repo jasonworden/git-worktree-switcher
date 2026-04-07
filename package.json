@@ -12,7 +12,6 @@
     "build": "make build",
     "build:release": "make build-release",
     "fix": "make fix",
-    "reload-zsh": "node -e \"console.log('source ' + require('path').resolve('git-worktree-switcher.plugin.zsh'))\"",
     "rebuild": "bash scripts/wt-rebuild.sh",
     "rebuild:release": "bash scripts/wt-rebuild.sh --release",
     "go": "bash scripts/wt-go"
