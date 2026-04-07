@@ -191,20 +191,18 @@ _wt_picker() {
 
   # Background: run the slow remote gather, write to file, then tell fzf
   # to reload from the file (cat is instant — no UI freeze).
-  # Include change-header to restore header after reload (fzf clears it otherwise).
+  # The +clear-screen forces a full terminal redraw — without it, fzf updates
+  # its internal state but doesn't repaint the header area (rendering bug when
+  # reload arrives via --listen HTTP POST).
   {
     wt-core unified --remote --format="$format_flag" > "$remote_cache" 2>/dev/null
-    local action_file=$(mktemp "${tmpdir}/wt-action.XXXXXX")
-    printf '%s' "reload(cat ${remote_cache})+change-header(${header_ready})" > "$action_file"
-    # Brief retry loop: fzf may not be listening yet on first iteration
+    local action="reload(cat ${remote_cache})+change-header(${header_ready})+clear-screen"
     local i
     for i in 1 2 3; do
       curl -s -X POST "http://localhost:${fzf_port}" \
-        --data-binary "@${action_file}" \
-        2>/dev/null && break
+        -d "$action" 2>/dev/null && break
       sleep 0.2
     done
-    rm -f "$action_file"
   } &
   local bg_pid=$!
 
