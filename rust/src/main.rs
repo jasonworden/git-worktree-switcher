@@ -1,5 +1,6 @@
 mod add;
 mod clean;
+mod config;
 mod delete;
 mod entries;
 mod git;
