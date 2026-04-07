@@ -184,6 +184,10 @@ _wt_picker() {
   local fzf_port=$((10000 + RANDOM % 50000))
   local remote_cache=$(mktemp "${tmpdir}/wt-remote.XXXXXX")
 
+  # Write the fzf action to a file (avoids ANSI/special char issues in curl -d)
+  local action_file=$(mktemp "${tmpdir}/wt-action.XXXXXX")
+  printf '%s' "reload(cat ${remote_cache})+change-header(${browse_hdr_done})" > "$action_file"
+
   # Background: run the slow remote gather, write to file, then tell fzf
   # to reload from the file (cat is instant — no UI freeze).
   {
@@ -192,7 +196,7 @@ _wt_picker() {
     local i
     for i in 1 2 3; do
       curl -s -X POST "http://localhost:${fzf_port}" \
-        -d "reload(cat ${remote_cache})+change-header(${browse_hdr_done})" \
+        --data-binary "@${action_file}" \
         2>/dev/null && break
       sleep 0.2
     done
@@ -219,7 +223,7 @@ _wt_picker() {
 
   # Clean up background process and temp files
   kill $bg_pid 2>/dev/null; wait $bg_pid 2>/dev/null
-  rm -f "$local_cache" "$remote_cache"
+  rm -f "$local_cache" "$remote_cache" "$action_file"
 
   [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return; }
 
