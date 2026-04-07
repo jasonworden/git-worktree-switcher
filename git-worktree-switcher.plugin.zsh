@@ -433,16 +433,25 @@ _wt() {
 compdef _wt wt
 
 # Dev helper: rebuild wt-core and reload the plugin.
-# If you're inside a worktree of this repo, builds from that worktree.
-# Otherwise falls back to wherever the plugin was originally sourced from.
+# Usage: wt-dev [path]
+#   wt-dev                  — auto-detect from PWD (if in this repo) or plugin source
+#   wt-dev /path/to/worktree — build from that specific worktree/checkout
 wt-dev() {
   local root
-  local git_root
-  git_root=$(git rev-parse --show-toplevel 2>/dev/null)
-  if [[ -n "$git_root" && -f "$git_root/rust/src/main.rs" ]]; then
-    root="$git_root"
+  if [[ -n "$1" ]]; then
+    root="$1"
   else
-    root="$_WT_PLUGIN_DIR"
+    local git_root
+    git_root=$(git rev-parse --show-toplevel 2>/dev/null)
+    if [[ -n "$git_root" && -f "$git_root/rust/src/main.rs" ]]; then
+      root="$git_root"
+    else
+      root="$_WT_PLUGIN_DIR"
+    fi
+  fi
+  if [[ ! -f "$root/rust/src/main.rs" ]]; then
+    echo "Not a wt repo: $root" >&2
+    return 1
   fi
   echo "Building from: $root"
   (cd "$root/rust" && cargo build --quiet) || return 1
