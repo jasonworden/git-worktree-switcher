@@ -16,7 +16,7 @@ pub struct Verdict {
 }
 
 /// Fetch merged PRs from GitHub via GraphQL. Returns branch_name -> PR number.
-fn fetch_merged_prs() -> HashMap<String, u64> {
+pub fn fetch_merged_prs() -> HashMap<String, u64> {
     let mut map = HashMap::new();
 
     let remote_url = Command::new("git")

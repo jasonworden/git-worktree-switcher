@@ -4,6 +4,7 @@ mod config;
 mod delete;
 mod entries;
 mod git;
+mod unified;
 
 use clap::{Parser, Subcommand};
 
@@ -66,6 +67,25 @@ enum Commands {
 
     /// Print branch names for tab completion
     Completions,
+
+    /// Unified worktree view with progressive loading
+    Unified {
+        /// Local-only mode (fast, no network)
+        #[arg(long)]
+        local: bool,
+
+        /// Remote mode (fetch + GitHub API)
+        #[arg(long)]
+        remote: bool,
+
+        /// Preview mode: show detail for a single worktree
+        #[arg(long)]
+        preview: Option<String>,
+
+        /// List available branches for plant mode
+        #[arg(long)]
+        branches: bool,
+    },
 }
 
 fn main() {
@@ -122,6 +142,24 @@ fn main() {
 
         Commands::Completions => {
             clean::run_completions();
+        }
+
+        Commands::Unified {
+            local,
+            remote,
+            preview,
+            branches,
+        } => {
+            if let Some(path) = preview {
+                unified::run_preview(&path);
+            } else if branches {
+                unified::run_branches();
+            } else if remote {
+                unified::run_remote();
+            } else {
+                // Default to local
+                unified::run_local();
+            }
         }
     }
 }
