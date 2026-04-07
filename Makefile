@@ -1,7 +1,7 @@
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 RUST := $(ROOT)rust
 
-.PHONY: help check fmt lint test test-rust test-shell build build-release clean
+.PHONY: help check fmt lint test test-rust test-shell build build-release go clean
 
 help: ## Show this help
 	@grep -E '^[a-z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -30,6 +30,12 @@ build: ## Build wt-core (debug)
 
 build-release: ## Build wt-core (release, optimized)
 	cd $(RUST) && cargo build --release
+
+# ── Dev reload ───────────────────────────────────────────────────
+go: ## Build + print eval-able shell to load plugin (use: eval "$(make -s go)")
+	@cd $(RUST) && cargo build --quiet
+	@printf 'export PATH="%s:$$PATH"\n' "$(RUST)/target/debug"
+	@printf 'source %s\n' "$(ROOT)git-worktree-switcher.plugin.zsh"
 
 # ── Fix ──────────────────────────────────────────────────────────
 fix: ## Auto-fix formatting and clippy suggestions

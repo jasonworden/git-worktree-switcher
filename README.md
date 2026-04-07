@@ -118,7 +118,8 @@ make build-release      # or: npm run build:release  (optimized)
 To build and load the plugin into your current shell in one shot:
 
 ```zsh
-eval "$(npm run --silent go)"
+eval "$(make -s go)"                    # from repo root or any worktree
+eval "$(make -s -C ~/code/git-worktree-switcher go)"  # from anywhere
 ```
 
 This compiles `wt-core`, adds it to `PATH`, and sources the plugin — ready to test immediately.

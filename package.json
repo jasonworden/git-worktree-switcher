@@ -12,8 +12,6 @@
     "build": "make build",
     "build:release": "make build-release",
     "fix": "make fix",
-    "rebuild": "bash scripts/wt-rebuild.sh",
-    "rebuild:release": "bash scripts/wt-rebuild.sh --release",
-    "go": "bash scripts/wt-go"
+    "go": "make go"
   }
 }
