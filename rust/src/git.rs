@@ -79,7 +79,10 @@ pub fn list_worktrees() -> Vec<Worktree> {
 
 /// Return the main (first) worktree's absolute path.
 pub fn main_worktree() -> Option<PathBuf> {
-    list_worktrees().into_iter().find(|w| w.is_main).map(|w| w.path)
+    list_worktrees()
+        .into_iter()
+        .find(|w| w.is_main)
+        .map(|w| w.path)
 }
 
 /// Return the branch name of the main worktree.

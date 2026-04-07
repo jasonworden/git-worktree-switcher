@@ -41,13 +41,7 @@ pub fn run(branch: &str) -> Result<(), String> {
             .status()
     } else {
         Command::new("git")
-            .args([
-                "worktree",
-                "add",
-                "-b",
-                branch,
-                &target.to_string_lossy(),
-            ])
+            .args(["worktree", "add", "-b", branch, &target.to_string_lossy()])
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .status()

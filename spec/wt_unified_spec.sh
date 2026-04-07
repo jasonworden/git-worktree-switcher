@@ -10,15 +10,15 @@ Describe "wt-core unified --local"
   BeforeEach "setup"
   AfterEach "cleanup"
 
-  It "outputs TSV with 9 fields per worktree"
+  It "outputs TSV with 10 fields per worktree"
     When call wt-core unified --local
-    The first line of output should match pattern "*	*	*	*	*	*	*	*	*"
+    The first line of output should match pattern "*	*	*	*	*	*	*	*	*	*"
     The status should be success
   End
 
   It "marks first worktree as main (is_main=true)"
     When call wt-core unified --local
-    The first line of output should end with "true"
+    The first line of output should include "pinned	true"
   End
 
   It "shows placeholder dots for remote columns in local mode"

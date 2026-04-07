@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::clean;
+use crate::config;
 use crate::entries;
 use crate::git;
 
@@ -13,8 +15,8 @@ const CYAN: &str = "\x1b[36m";
 const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 const BULLET: &str = "\u{25cf}"; // ●
-const CHECK: &str = "\u{2713}";  // ✓
-const MDASH: &str = "\u{2014}";  // —
+const CHECK: &str = "\u{2713}"; // ✓
+const MDASH: &str = "\u{2014}"; // —
 const DOTS: &str = "\u{b7}\u{b7}"; // ··
 
 /// Worktree row data (shared between local and remote).
@@ -28,10 +30,34 @@ struct Row {
     pr: String,
     verdict: String,
     is_main: bool,
+    stale: bool,
+}
+
+const STALE_THRESHOLD_SECS: u64 = 14 * 24 * 60 * 60; // 2 weeks
+
+/// Check if the last commit on a branch is older than 2 weeks.
+fn is_stale(path: &str) -> bool {
+    let output = Command::new("git")
+        .args(["-C", path, "log", "-1", "--format=%ct"])
+        .output()
+        .ok();
+    let timestamp: u64 = output
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+        .unwrap_or(0);
+    if timestamp == 0 {
+        return false;
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    now.saturating_sub(timestamp) > STALE_THRESHOLD_SECS
 }
 
 /// Gather local-only data (instant, no network).
 fn gather_local() -> Vec<Row> {
+    let cfg = config::load();
     let worktrees = git::list_worktrees();
     let main_path = worktrees.iter().find(|w| w.is_main).map(|w| w.path.clone());
     let default_branch = git::default_branch().unwrap_or_else(|| "main".to_string());
@@ -47,19 +73,31 @@ fn gather_local() -> Vec<Row> {
                 MDASH.to_string()
             } else {
                 let n = git::unique_commits(&wt.branch, &default_branch);
-                if n > 0 { n.to_string() } else { MDASH.to_string() }
+                if n > 0 {
+                    n.to_string()
+                } else {
+                    MDASH.to_string()
+                }
             };
+
+            let abs = wt.path.to_string_lossy().to_string();
+            let stale = !wt.is_main && cfg.stale_warning && is_stale(&abs);
 
             Row {
                 branch: wt.branch.clone(),
                 rel,
-                abs: wt.path.to_string_lossy().to_string(),
+                abs,
                 tree,
                 ahead,
                 remote: DOTS.to_string(),
                 pr: DOTS.to_string(),
-                verdict: if wt.is_main { "pinned".to_string() } else { "pending".to_string() },
+                verdict: if wt.is_main {
+                    "pinned".to_string()
+                } else {
+                    "pending".to_string()
+                },
                 is_main: wt.is_main,
+                stale,
             }
         })
         .collect()
@@ -67,6 +105,8 @@ fn gather_local() -> Vec<Row> {
 
 /// Gather remote-enriched data (fetch + GH API).
 fn gather_remote() -> Vec<Row> {
+    let cfg = config::load();
+
     // Background: git fetch --prune
     let mut fetch_child = Command::new("git")
         .args(["fetch", "--prune", "--quiet"])
@@ -101,22 +141,29 @@ fn gather_remote() -> Vec<Row> {
             let dirty = git::has_changes(&wt.path);
             let tree = if dirty { "dirty" } else { "clean" }.to_string();
 
+            let abs = wt.path.to_string_lossy().to_string();
+
             if wt.is_main {
                 return Row {
                     branch: wt.branch.clone(),
                     rel,
-                    abs: wt.path.to_string_lossy().to_string(),
+                    abs,
                     tree,
                     ahead: MDASH.to_string(),
                     remote: MDASH.to_string(),
                     pr: MDASH.to_string(),
                     verdict: "pinned".to_string(),
                     is_main: true,
+                    stale: false,
                 };
             }
 
             let ahead_n = git::unique_commits(&wt.branch, &default_branch);
-            let ahead = if ahead_n > 0 { ahead_n.to_string() } else { MDASH.to_string() };
+            let ahead = if ahead_n > 0 {
+                ahead_n.to_string()
+            } else {
+                MDASH.to_string()
+            };
 
             let remote_gone = has_remote && git::remote_branch_gone(&wt.branch);
             let remote = if !has_remote {
@@ -147,16 +194,19 @@ fn gather_remote() -> Vec<Row> {
                 (false, false) => "keep",
             };
 
+            let stale = cfg.stale_warning && is_stale(&abs);
+
             Row {
                 branch: wt.branch.clone(),
                 rel,
-                abs: wt.path.to_string_lossy().to_string(),
+                abs,
                 tree,
                 ahead,
                 remote,
                 pr,
                 verdict: verdict.to_string(),
                 is_main: false,
+                stale,
             }
         })
         .collect()
@@ -170,10 +220,16 @@ fn format_browse(row: &Row) -> String {
         " ".to_string()
     };
 
+    let stale_tag = if row.stale {
+        format!(" {YELLOW}stale{RESET}")
+    } else {
+        String::new()
+    };
+
     let branch_col = if row.is_main {
         format!("{GREEN}{}{RESET}", row.branch)
     } else {
-        format!("{CYAN}{}{RESET}", row.branch)
+        format!("{CYAN}{}{RESET}{stale_tag}", row.branch)
     };
 
     let tree_col = if row.tree == "clean" {
@@ -216,7 +272,12 @@ fn format_uproot(row: &Row) -> String {
         );
     }
 
-    let branch_col = format!("{CYAN}{}{RESET}", row.branch);
+    let stale_tag = if row.stale {
+        format!(" {YELLOW}stale{RESET}")
+    } else {
+        String::new()
+    };
+    let branch_col = format!("{CYAN}{}{RESET}{stale_tag}", row.branch);
     let tree_col = if row.tree == "clean" {
         format!("{GREEN}clean{RESET}")
     } else {
@@ -264,15 +325,6 @@ pub fn run_remote_formatted(format: &str) {
     output_rows(&rows, format);
 }
 
-/// Raw TSV output (no ANSI, for backward compat / scripting).
-pub fn run_local() {
-    run_local_formatted("tsv");
-}
-
-pub fn run_remote() {
-    run_remote_formatted("tsv");
-}
-
 fn output_rows(rows: &[Row], format: &str) {
     for row in rows {
         match format {
@@ -281,9 +333,17 @@ fn output_rows(rows: &[Row], format: &str) {
             _ => {
                 // Raw TSV
                 println!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                    row.branch, row.rel, row.abs, row.tree, row.ahead,
-                    row.remote, row.pr, row.verdict, row.is_main,
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    row.branch,
+                    row.rel,
+                    row.abs,
+                    row.tree,
+                    row.ahead,
+                    row.remote,
+                    row.pr,
+                    row.verdict,
+                    row.is_main,
+                    row.stale,
                 );
             }
         }

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// All wt settings, resolved from layered sources.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     pub opinionated: bool,
     pub basedir: Option<String>,
@@ -15,24 +15,6 @@ pub struct Config {
     pub auto_cd: bool,
     pub hook_post_plant: Option<String>,
     pub hook_post_enter: Option<String>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            opinionated: false,
-            basedir: None,
-            main_guard: false,
-            auto_gitignore: false,
-            delete_branch: false,
-            auto_fetch: false,
-            branch_prefix: false,
-            stale_warning: false,
-            auto_cd: false,
-            hook_post_plant: None,
-            hook_post_enter: None,
-        }
-    }
 }
 
 /// TOML schema for .wt/config
@@ -290,10 +272,7 @@ mod tests {
     fn resolve_basedir_none_uses_parent() {
         let cfg = Config::default();
         let main_wt = Path::new("/home/user/project");
-        assert_eq!(
-            resolve_basedir(&cfg, main_wt),
-            PathBuf::from("/home/user")
-        );
+        assert_eq!(resolve_basedir(&cfg, main_wt), PathBuf::from("/home/user"));
     }
 
     #[test]

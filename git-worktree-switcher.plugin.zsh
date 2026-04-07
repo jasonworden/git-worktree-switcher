@@ -309,6 +309,13 @@ _wt_handle_uproot() {
   delete_branch=$(git config --get wt.opinionated.deleteBranch 2>/dev/null)
   [[ "$delete_branch" == "true" ]] && keep_branches=false
 
+  # Main guard: resolve default branch name
+  local main_guard
+  main_guard=$(git config --get wt.opinionated.mainGuard 2>/dev/null)
+  local default_branch
+  default_branch=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo "main")
+  default_branch="${default_branch#origin/}"
+
   local -a paths branches
   local line abs_path branch_name
   for line in "${lines[@]}"; do
@@ -317,8 +324,12 @@ _wt_handle_uproot() {
     # Extract branch: strip ANSI, trim leading spaces, take first word
     branch_name=$(echo "$line" | sed $'s/\033\\[[0-9;]*m//g' | sed 's/^[[:space:]]*//' | awk '{print $1}')
     [[ -n "$abs_path" && -n "$branch_name" ]] || continue
-    # Skip main worktree (pinned)
+    # Skip main worktree (pinned verdict or main guard)
     [[ "$branch_name" == "pinned" ]] && continue
+    if [[ "$main_guard" == "true" && "$branch_name" == "$default_branch" ]]; then
+      echo "Skipping $branch_name (main guard enabled)" >&2
+      continue
+    fi
     paths+=("$abs_path")
     branches+=("$branch_name")
   done

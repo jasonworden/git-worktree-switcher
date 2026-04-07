@@ -26,10 +26,7 @@ pub fn worktree_rel(wt: &git::Worktree, main_path: Option<&PathBuf>) -> String {
 /// Print worktrees as TSV: branch\trel_path\tabs_path
 pub fn run() {
     let worktrees = git::list_worktrees();
-    let main_path = worktrees
-        .iter()
-        .find(|w| w.is_main)
-        .map(|w| w.path.clone());
+    let main_path = worktrees.iter().find(|w| w.is_main).map(|w| w.path.clone());
 
     for wt in &worktrees {
         let rel = worktree_rel(wt, main_path.as_ref());
@@ -41,21 +38,22 @@ pub fn run() {
 /// One process — avoids N× `quick-status` subprocess cost.
 pub fn run_picker() {
     let worktrees = git::list_worktrees();
-    let main_path = worktrees
-        .iter()
-        .find(|w| w.is_main)
-        .map(|w| w.path.clone());
+    let main_path = worktrees.iter().find(|w| w.is_main).map(|w| w.path.clone());
     let default_branch = git::default_branch().unwrap_or_else(|| "main".to_string());
 
     for wt in &worktrees {
         let rel = worktree_rel(wt, main_path.as_ref());
         let staleness = if wt.is_main {
             ""
-        } else if let Some(s) = clean::quick_status_label(&wt.branch, &wt.path, &default_branch) {
-            s
         } else {
-            ""
+            clean::quick_status_label(&wt.branch, &wt.path, &default_branch).unwrap_or_default()
         };
-        println!("{}\t{}\t{}\t{}", wt.branch, rel, wt.path.display(), staleness);
+        println!(
+            "{}\t{}\t{}\t{}",
+            wt.branch,
+            rel,
+            wt.path.display(),
+            staleness
+        );
     }
 }
