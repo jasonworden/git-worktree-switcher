@@ -132,11 +132,11 @@ _wt_picker() {
   local local_cache=$(mktemp "${tmpdir}/wt-local.XXXXXX")
 
   # Headers per mode — [BRACKETS] mark the active mode
-  local browse_hdr_load='Loading…  [BROWSE]  uproot  plant  ·  enter cd · ctrl-o open · ctrl-p · ctrl-r'
-  local browse_hdr='[BROWSE]  uproot  plant  ·  enter cd · ctrl-o open · ctrl-p · ctrl-r'
-  local uproot_hdr_load='Loading…  browse  [UPROOT]  plant  ·  tab select · enter confirm · esc back · ctrl-r'
-  local uproot_hdr='browse  [UPROOT]  plant  ·  tab select · enter confirm · esc back · ctrl-r'
-  local plant_hdr='browse  uproot  [PLANT]  ·  select branch or type new · esc back'
+  local browse_hdr_load='Loading…  alt-1 [BROWSE]  alt-2 uproot  alt-3 plant  ·  enter switch · ctrl-o editor · ctrl-r refresh · ctrl-p preview'
+  local browse_hdr='alt-1 [BROWSE]  alt-2 uproot  alt-3 plant  ·  enter switch · ctrl-o editor · ctrl-r refresh · ctrl-p preview'
+  local uproot_hdr_load='Loading…  alt-1 browse  alt-2 [UPROOT]  alt-3 plant  ·  tab select · enter delete · esc back · ctrl-r refresh'
+  local uproot_hdr='alt-1 browse  alt-2 [UPROOT]  alt-3 plant  ·  tab select · enter delete · esc back · ctrl-r refresh'
+  local plant_hdr='alt-1 browse  alt-2 uproot  alt-3 [PLANT]  ·  enter create · esc back'
 
   # Preview command (toggled with ctrl-p)
   local preview_cmd='wt-core unified --preview {-1} 2>/dev/null'
