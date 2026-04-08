@@ -257,9 +257,7 @@ fn format_header(w: &ColWidths, include_verdict: bool) -> String {
             "  {branch_col}  {rel_col}  {tree_col}  {ahead_col}  {remote_col}  {pr_col}  {verdict_col}\t."
         )
     } else {
-        format!(
-            "  {branch_col}  {rel_col}  {tree_col}  {ahead_col}  {remote_col}  {pr_col}\t."
-        )
+        format!("  {branch_col}  {rel_col}  {tree_col}  {ahead_col}  {remote_col}  {pr_col}\t.")
     }
 }
 
