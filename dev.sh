@@ -35,4 +35,5 @@ wt-dev() {
   export PATH="$root/rust/target/debug:$PATH"
   source "$root/git-worktree-switcher.plugin.zsh"
   echo "wt-dev: rebuilt + reloaded"
+  wt
 }
