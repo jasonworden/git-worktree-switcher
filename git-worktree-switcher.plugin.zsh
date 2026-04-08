@@ -305,16 +305,16 @@ _wt_picker() {
 _wt_handle_plant() {
   { set +x } 2>/dev/null
   emulate -LR zsh
-  # Strip ANSI codes and extract first word (branch name) from formatted row
+  # Check for __NEW__ marker (tab-delimited) or extract branch name
   local raw_selection="$1"
   local selection
-  selection=$(echo "$raw_selection" | sed 's/\x1b\[[0-9;]*m//g' | awk '{print $1}')
-  [[ -n "$selection" ]] || return
 
-  if [[ "$selection" == "[new" ]]; then
-    # "[new branch]" becomes "[new" after awk — detect this
+  if [[ "$raw_selection" == *$'\t__NEW__'* ]]; then
     selection="[new branch]"
+  else
+    selection=$(echo "$raw_selection" | sed 's/\x1b\[[0-9;]*m//g' | awk '{print $1}')
   fi
+  [[ -n "$selection" ]] || return
 
   if [[ "$selection" == "[new branch]" ]]; then
     printf "Branch name: "
@@ -441,8 +441,7 @@ _wt_add() {
   [[ -z "$1" ]] && { echo "Usage: wt add <branch-name>" >&2; return 1; }
 
   local target
-  target=$(wt-core add "$1")
-  [[ $? -ne 0 ]] && return 1
+  target=$(wt-core add "$1") || return 1
 
   _wt_run_hook "post-plant" "$target" "$1" "true"
   cd "$target"

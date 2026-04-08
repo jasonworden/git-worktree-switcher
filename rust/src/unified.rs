@@ -158,18 +158,18 @@ fn gather_remote() -> Vec<Row> {
                 format!("origin {CHECK}")
             };
 
-            let pr_merged = merged_prs.contains_key(&wt.branch);
+            let pr_num = merged_prs.get(&wt.branch);
             let pr = if !has_remote {
                 MDASH.to_string()
-            } else if let Some(pr_num) = merged_prs.get(&wt.branch) {
-                format!("#{pr_num} merged")
+            } else if let Some(num) = pr_num {
+                format!("#{num} merged")
             } else if !gh_ok {
                 "no gh".to_string()
             } else {
                 "no PR".to_string()
             };
 
-            let has_gone_signal = remote_gone || pr_merged;
+            let has_gone_signal = remote_gone || pr_num.is_some();
             let has_concerns = ahead_n > 0 || dirty;
             let verdict = match (has_concerns, has_gone_signal) {
                 (false, true) => "safe",
@@ -522,8 +522,8 @@ pub fn run_branches() {
     // Header row (pinned by --header-lines=1) — print immediately
     println!("{DIM}  BRANCH{RESET}");
 
-    // [new branch] option — print immediately
-    println!("  {GREEN}[new branch]{RESET}");
+    // [new branch] option — print immediately; __NEW__ marker for machine parsing
+    println!("  {GREEN}[new branch]{RESET}\t__NEW__");
 
     // Stream remote branches as we find them
     let output = Command::new("git")
