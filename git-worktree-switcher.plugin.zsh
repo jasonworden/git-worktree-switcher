@@ -131,12 +131,12 @@ _wt_picker() {
   local fzf_out=$(mktemp "${tmpdir}/wt-fzf.XXXXXX")
   local local_cache=$(mktemp "${tmpdir}/wt-local.XXXXXX")
 
-  # Headers per mode — [BRACKETS] mark the active mode, key:action pairs
-  local browse_hdr_load='Loading…  1:[BROWSE] 2:uproot 3:plant  |  enter:switch  ^O:editor  ^R:refresh  ^P:preview'
-  local browse_hdr='1:[BROWSE] 2:uproot 3:plant  |  enter:switch  ^O:editor  ^R:refresh  ^P:preview'
-  local uproot_hdr_load='Loading…  1:browse 2:[UPROOT] 3:plant  |  tab:select  enter:delete  esc:back  ^R:refresh'
-  local uproot_hdr='1:browse 2:[UPROOT] 3:plant  |  tab:select  enter:delete  esc:back  ^R:refresh'
-  local plant_hdr='1:browse 2:uproot 3:[PLANT]  |  enter:create  esc:back'
+  # Headers per mode — [BRACKETS] mark active mode, alt-N to switch
+  local browse_hdr_load='Loading…  alt-1 [BROWSE]  alt-2 uproot  alt-3 plant  |  enter:switch  ^O:editor  ^R:refresh  ^P:preview'
+  local browse_hdr='alt-1 [BROWSE]  alt-2 uproot  alt-3 plant  |  enter:switch  ^O:editor  ^R:refresh  ^P:preview'
+  local uproot_hdr_load='Loading…  alt-1 browse  alt-2 [UPROOT]  alt-3 plant  |  tab:select  enter:delete  esc:back  ^R:refresh'
+  local uproot_hdr='alt-1 browse  alt-2 [UPROOT]  alt-3 plant  |  tab:select  enter:delete  esc:back  ^R:refresh'
+  local plant_hdr='alt-1 browse  alt-2 uproot  alt-3 [PLANT]  |  enter:create  esc:back'
 
   # Preview command (toggled with ctrl-p)
   local preview_cmd='wt-core unified --preview {-1} 2>/dev/null'
