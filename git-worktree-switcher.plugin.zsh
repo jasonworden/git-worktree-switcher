@@ -131,23 +131,42 @@ _wt_picker() {
   local fzf_out=$(mktemp "${tmpdir}/wt-fzf.XXXXXX")
   local local_cache=$(mktemp "${tmpdir}/wt-local.XXXXXX")
 
-  # Headers per mode — [BRACKETS] mark the active mode
-  local browse_hdr_load='Loading…  alt-1 [BROWSE]  alt-2 uproot  alt-3 plant  ·  enter switch · ctrl-o editor · ctrl-r refresh · ctrl-p preview'
-  local browse_hdr='alt-1 [BROWSE]  alt-2 uproot  alt-3 plant  ·  enter switch · ctrl-o editor · ctrl-r refresh · ctrl-p preview'
-  local uproot_hdr_load='Loading…  alt-1 browse  alt-2 [UPROOT]  alt-3 plant  ·  tab select · enter delete · esc back · ctrl-r refresh'
-  local uproot_hdr='alt-1 browse  alt-2 [UPROOT]  alt-3 plant  ·  tab select · enter delete · esc back · ctrl-r refresh'
-  local plant_hdr='alt-1 browse  alt-2 uproot  alt-3 [PLANT]  ·  enter create · esc back'
+  # Headers per mode — [BRACKETS] mark the active mode, key:action pairs
+  local browse_hdr_load='Loading…  1:[BROWSE] 2:uproot 3:plant  |  enter:switch  ^O:editor  ^R:refresh  ^P:preview'
+  local browse_hdr='1:[BROWSE] 2:uproot 3:plant  |  enter:switch  ^O:editor  ^R:refresh  ^P:preview'
+  local uproot_hdr_load='Loading…  1:browse 2:[UPROOT] 3:plant  |  tab:select  enter:delete  esc:back  ^R:refresh'
+  local uproot_hdr='1:browse 2:[UPROOT] 3:plant  |  tab:select  enter:delete  esc:back  ^R:refresh'
+  local plant_hdr='1:browse 2:uproot 3:[PLANT]  |  enter:create  esc:back'
 
   # Preview command (toggled with ctrl-p)
   local preview_cmd='wt-core unified --preview {-1} 2>/dev/null'
 
   if [[ "$initial_mode" == "plant" ]]; then
-    # Plant mode: simple branch picker
     rm -f "$local_cache"
     wt-core unified --branches 2>/dev/null | \
-      fzf --ansi --height=40% --header="$plant_hdr" --prompt="plant> " > "$fzf_out"
+      fzf --ansi --height=100% \
+        --header="$plant_hdr" \
+        --header-lines=1 \
+        --prompt="plant> " \
+        --bind="alt-1:become(echo __BROWSE__)" \
+        --bind="alt-2:become(echo __UPROOT__)" \
+        --bind="esc:become(echo __BROWSE__)" \
+        > "$fzf_out"
 
     [[ -s "$fzf_out" ]] || { rm -f "$fzf_out"; return; }
+    local first_line=$(<"$fzf_out")
+
+    if [[ "$first_line" == "__BROWSE__" ]]; then
+      rm -f "$fzf_out"
+      _wt_picker "browse"
+      return
+    fi
+    if [[ "$first_line" == "__UPROOT__" ]]; then
+      rm -f "$fzf_out"
+      _wt_picker "uproot"
+      return
+    fi
+
     local selection=$(<"$fzf_out")
     rm -f "$fzf_out"
     _wt_handle_plant "$selection"
@@ -286,7 +305,16 @@ _wt_picker() {
 _wt_handle_plant() {
   { set +x } 2>/dev/null
   emulate -LR zsh
-  local selection="$1"
+  # Strip ANSI codes and extract first word (branch name) from formatted row
+  local raw_selection="$1"
+  local selection
+  selection=$(echo "$raw_selection" | sed 's/\x1b\[[0-9;]*m//g' | awk '{print $1}')
+  [[ -n "$selection" ]] || return
+
+  if [[ "$selection" == "[new" ]]; then
+    # "[new branch]" becomes "[new" after awk — detect this
+    selection="[new branch]"
+  fi
 
   if [[ "$selection" == "[new branch]" ]]; then
     printf "Branch name: "

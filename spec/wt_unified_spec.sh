@@ -174,8 +174,13 @@ Describe "wt-core unified --branches"
   BeforeEach "setup"
   AfterEach "cleanup"
 
-  It "shows [new branch] as first option"
+  It "has BRANCH header as first line"
     When call wt-core unified --branches
-    The first line of output should equal "[new branch]"
+    The first line of output should include "BRANCH"
+  End
+
+  It "shows [new branch] as second line"
+    When call wt-core unified --branches
+    The second line of output should include "[new branch]"
   End
 End

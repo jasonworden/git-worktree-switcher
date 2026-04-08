@@ -514,27 +514,74 @@ pub fn run_preview(path: &str) {
 }
 
 /// List remote branches not yet checked out as worktrees (for plant mode).
+/// Shows branch name, source (remote/local), and last commit date.
 pub fn run_branches() {
     let worktrees = git::list_worktrees();
     let wt_branches: Vec<&str> = worktrees.iter().map(|w| w.branch.as_str()).collect();
 
-    let output = Command::new("git")
+    struct BranchInfo {
+        name: String,
+        source: String,
+        last_commit: String,
+    }
+
+    let mut branches: Vec<BranchInfo> = Vec::new();
+
+    // Remote branches not yet checked out
+    let remote_out = Command::new("git")
         .args(["branch", "-r", "--format=%(refname:short)"])
         .output();
 
-    if let Ok(o) = output {
+    if let Ok(o) = remote_out {
         if o.status.success() {
             let stdout = String::from_utf8_lossy(&o.stdout);
-            println!("[new branch]");
             for line in stdout.lines() {
                 let branch = line.strip_prefix("origin/").unwrap_or(line);
-                if branch == "HEAD" {
+                if branch == "HEAD" || wt_branches.contains(&branch) {
                     continue;
                 }
-                if !wt_branches.contains(&branch) {
-                    println!("{branch}");
-                }
+                let last = Command::new("git")
+                    .args(["log", "-1", "--format=%cr", &format!("origin/{branch}")])
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+                branches.push(BranchInfo {
+                    name: branch.to_string(),
+                    source: "remote".to_string(),
+                    last_commit: last,
+                });
             }
         }
+    }
+
+    // Compute column widths
+    let name_w = branches.iter().map(|b| b.name.len()).max().unwrap_or(6).max(6);
+    let src_w = 6; // "remote" / "SOURCE"
+    let last_w = branches
+        .iter()
+        .map(|b| b.last_commit.len())
+        .max()
+        .unwrap_or(11)
+        .max(11); // "LAST COMMIT"
+
+    // Header row (pinned by --header-lines=1)
+    println!(
+        "  {DIM}{:<name_w$}{RESET}  {DIM}{:<src_w$}{RESET}  {DIM}{:<last_w$}{RESET}",
+        "BRANCH", "SOURCE", "LAST COMMIT"
+    );
+
+    // [new branch] option
+    println!(
+        "  {GREEN}{:<name_w$}{RESET}  {DIM}{:<src_w$}{RESET}  {DIM}{:<last_w$}{RESET}",
+        "[new branch]", "", ""
+    );
+
+    for b in &branches {
+        println!(
+            "  {CYAN}{:<name_w$}{RESET}  {DIM}{:<src_w$}{RESET}  {DIM}{:<last_w$}{RESET}",
+            b.name, b.source, b.last_commit
+        );
     }
 }
