@@ -213,7 +213,7 @@ fn compute_widths(rows: &[Row], include_verdict: bool) -> ColWidths {
         branch: 6,  // "BRANCH"
         rel: 4,     // "PATH"
         tree: 4,    // "TREE"
-        ahead: 5,   // "AHEAD"
+        ahead: 9,   // "+COMMITS"
         remote: 6,  // "REMOTE"
         pr: 2,      // "PR"
         verdict: 7, // "VERDICT"
@@ -247,7 +247,7 @@ fn format_header(w: &ColWidths, include_verdict: bool) -> String {
     let branch_col = colored("BRANCH", DIM, w.branch);
     let rel_col = colored("PATH", DIM, w.rel);
     let tree_col = colored("TREE", DIM, w.tree);
-    let ahead_col = colored("AHEAD", DIM, w.ahead);
+    let ahead_col = colored("+COMMITS", DIM, w.ahead);
     let remote_col = colored("REMOTE", DIM, w.remote);
     let pr_col = colored("PR", DIM, w.pr);
 
