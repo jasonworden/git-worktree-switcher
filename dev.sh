@@ -34,6 +34,5 @@ wt-dev() {
   (cd "$root/rust" && cargo build --quiet) || return 1
   export PATH="$root/rust/target/debug:$PATH"
   source "$root/git-worktree-switcher.plugin.zsh"
-  echo "wt-dev: rebuilt + reloaded"
-  wt
+  echo "wt-dev: rebuilt + reloaded — run 'wt' to test"
 }
