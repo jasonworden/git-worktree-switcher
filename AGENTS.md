@@ -4,14 +4,22 @@
 
 Rust binary `wt-core` (worktree operations) plus a zsh plugin (`wt`, fzf, completions). Distributed via Homebrew (`jasonworden/tap/wt-core`).
 
+## Architecture
+
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for full system design: data flow, TSV schema, verdict logic, config system, hooks, and known fzf limitations.
+
 ## Key paths
 
 | Path | Purpose |
 | --- | --- |
 | `rust/` | Cargo crate, `wt-core` binary |
-| `git-worktree-switcher.plugin.zsh`, `wt.zsh` | zsh integration |
+| `rust/src/unified.rs` | Core module: progressive loading, formatting, verdicts |
+| `rust/src/config.rs` | Layered config: `.wt/config` TOML + git config + env |
+| `git-worktree-switcher.plugin.zsh` | zsh wrapper: fzf lifecycle, cd, mode switching, hooks |
 | `spec/` | ShellSpec tests |
+| `dev.sh` | Dev helper: rebuild + reload (`source dev.sh`, then `wt-dev`) |
 | `Formula/` | Homebrew formula |
+| `docs/ARCHITECTURE.md` | System architecture and data flow |
 | `.agents/skills/` | Project-specific agent skills |
 
 ## Pull requests

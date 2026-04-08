@@ -1,4 +1,4 @@
-name: Tests
+name: CI
 
 on:
   push:
@@ -7,12 +7,42 @@ on:
     branches: [main]
 
 jobs:
-  rust:
+  # ── Lint (fast, single OS, no matrix) ──────────────────────────
+  rust-lint:
+    name: "Lint: Rust (fmt + clippy)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Check formatting
+        working-directory: rust
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: rust
+        run: cargo clippy -- -D warnings
+
+  # ── Build + Test (cross-platform) ─────────────────────────────
+  rust-test:
+    name: "Test: Rust (${{ matrix.os }})"
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -28,19 +58,19 @@ jobs:
             rust/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
 
-      - name: Build and test Rust binary
+      - name: Build and test
         working-directory: rust
         run: |
           cargo build
           cargo test
 
-  shell:
-    needs: rust
+  shell-test:
+    name: "Test: Shell (${{ matrix.os }})"
+    needs: rust-test
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -69,5 +99,5 @@ jobs:
           git clone --depth 1 https://github.com/shellspec/shellspec.git /tmp/shellspec
           sudo ln -s /tmp/shellspec/shellspec /usr/local/bin/shellspec
 
-      - name: Run shell tests
+      - name: Run ShellSpec tests
         run: shellspec

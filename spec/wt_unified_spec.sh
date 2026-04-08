@@ -10,15 +10,15 @@ Describe "wt-core unified --local"
   BeforeEach "setup"
   AfterEach "cleanup"
 
-  It "outputs TSV with 9 fields per worktree"
+  It "outputs TSV with 10 fields per worktree"
     When call wt-core unified --local
-    The first line of output should match pattern "*	*	*	*	*	*	*	*	*"
+    The first line of output should match pattern "*	*	*	*	*	*	*	*	*	*"
     The status should be success
   End
 
   It "marks first worktree as main (is_main=true)"
     When call wt-core unified --local
-    The first line of output should end with "true"
+    The first line of output should include "pinned	true"
   End
 
   It "shows placeholder dots for remote columns in local mode"
@@ -37,18 +37,25 @@ Describe "wt-core unified --local"
     The second line of output should include "pending"
   End
 
-  It "detects dirty worktree"
+  It "local mode uses placeholders for tree/ahead (fast path)"
     WT_PATH=$(add_test_worktree "$TEST_REPO" "feature-x")
     echo "dirty" > "$WT_PATH/newfile.txt"
     When call wt-core unified --local
+    The second line of output should include "··"
+  End
+
+  It "remote mode detects dirty worktree"
+    WT_PATH=$(add_test_worktree "$TEST_REPO" "feature-x")
+    echo "dirty" > "$WT_PATH/newfile.txt"
+    When call wt-core unified --remote
     The second line of output should include "dirty"
   End
 
-  It "counts unique commits ahead"
+  It "remote mode counts unique commits ahead"
     WT_PATH=$(add_test_worktree "$TEST_REPO" "feature-x")
     git -C "$WT_PATH" commit --allow-empty -m "unique1" --quiet
     git -C "$WT_PATH" commit --allow-empty -m "unique2" --quiet
-    When call wt-core unified --local
+    When call wt-core unified --remote
     The second line of output should include "2"
   End
 
@@ -78,9 +85,14 @@ Describe "wt-core unified --local --format=browse"
     The first line of output should include "[0m"
   End
 
-  It "includes abs path as tab-delimited last field"
+  It "has a column header as the first line"
     When call wt-core unified --local --format=browse
-    The first line of output should include "$TEST_REPO"
+    The first line of output should include "BRANCH"
+  End
+
+  It "includes abs path as tab-delimited last field in data rows"
+    When call wt-core unified --local --format=browse
+    The second line of output should include "$TEST_REPO"
   End
 End
 
@@ -162,8 +174,13 @@ Describe "wt-core unified --branches"
   BeforeEach "setup"
   AfterEach "cleanup"
 
-  It "shows [new branch] as first option"
+  It "has BRANCH header as first line"
     When call wt-core unified --branches
-    The first line of output should equal "[new branch]"
+    The first line of output should include "BRANCH"
+  End
+
+  It "shows [new branch] as second line"
+    When call wt-core unified --branches
+    The second line of output should include "[new branch]"
   End
 End

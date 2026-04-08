@@ -36,9 +36,7 @@ pub fn fetch_merged_prs() -> HashMap<String, u64> {
         None => return map,
     };
 
-    let query = format!(
-        r#"query($owner:String!,$repo:String!){{repository(owner:$owner,name:$repo){{pullRequests(first:100,states:MERGED,orderBy:{{field:UPDATED_AT,direction:DESC}}){{nodes{{headRefName number}}}}}}}}"#
-    );
+    let query = r#"query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){pullRequests(first:100,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{headRefName number}}}}"#.to_string();
 
     let output = Command::new("gh")
         .args([
@@ -85,13 +83,13 @@ fn parse_owner_repo(url: &str) -> Option<(String, String)> {
         // git@github.com:owner/repo.git
         let path = url.split(':').nth(1)?;
         let path = path.strip_suffix(".git").unwrap_or(path);
-        let mut parts = path.splitn(2, '/');
-        let owner = parts.next()?;
-        let repo = parts.next()?;
+        let (owner, repo) = path.split_once('/')?;
         Some((owner.to_string(), repo.to_string()))
     } else {
         // https://github.com/owner/repo.git
-        let url = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+        let url = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))?;
         let mut parts = url.splitn(3, '/');
         let _host = parts.next()?;
         let owner = parts.next()?;
@@ -227,7 +225,7 @@ pub fn quick_status_label(
 pub fn run_quick_status(branch: &str, wt_path: &str, default_branch: Option<&str>) {
     let default = default_branch
         .map(|s| s.to_string())
-        .or_else(|| git::default_branch())
+        .or_else(git::default_branch)
         .unwrap_or_else(|| "main".to_string());
 
     if let Some(s) = quick_status_label(branch, std::path::Path::new(wt_path), &default) {
@@ -254,21 +252,24 @@ mod tests {
 
     #[test]
     fn parse_ssh_remote() {
-        let (owner, repo) = parse_owner_repo("git@github.com:jasonworden/git-worktree-switcher.git").unwrap();
+        let (owner, repo) =
+            parse_owner_repo("git@github.com:jasonworden/git-worktree-switcher.git").unwrap();
         assert_eq!(owner, "jasonworden");
         assert_eq!(repo, "git-worktree-switcher");
     }
 
     #[test]
     fn parse_https_remote() {
-        let (owner, repo) = parse_owner_repo("https://github.com/jasonworden/git-worktree-switcher.git").unwrap();
+        let (owner, repo) =
+            parse_owner_repo("https://github.com/jasonworden/git-worktree-switcher.git").unwrap();
         assert_eq!(owner, "jasonworden");
         assert_eq!(repo, "git-worktree-switcher");
     }
 
     #[test]
     fn parse_https_no_git_suffix() {
-        let (owner, repo) = parse_owner_repo("https://github.com/jasonworden/git-worktree-switcher").unwrap();
+        let (owner, repo) =
+            parse_owner_repo("https://github.com/jasonworden/git-worktree-switcher").unwrap();
         assert_eq!(owner, "jasonworden");
         assert_eq!(repo, "git-worktree-switcher");
     }

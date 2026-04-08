@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// All wt settings, resolved from layered sources.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     pub opinionated: bool,
     pub basedir: Option<String>,
@@ -17,24 +17,6 @@ pub struct Config {
     pub hook_post_enter: Option<String>,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            opinionated: false,
-            basedir: None,
-            main_guard: false,
-            auto_gitignore: false,
-            delete_branch: false,
-            auto_fetch: false,
-            branch_prefix: false,
-            stale_warning: false,
-            auto_cd: false,
-            hook_post_plant: None,
-            hook_post_enter: None,
-        }
-    }
-}
-
 /// TOML schema for .wt/config
 #[derive(Debug, Default, serde::Deserialize)]
 struct TomlFile {
@@ -46,14 +28,9 @@ struct TomlWt {
     opinionated: Option<bool>,
     basedir: Option<String>,
     #[serde(default)]
-    opinionated_settings: Option<TomlOpinionated>,
+    settings: Option<TomlOpinionated>,
     hook: Option<TomlHook>,
 }
-
-// Supports both [wt.opinionated] (table) and wt.opinionated (bool).
-// The TOML key "opinionated" as bool lives in TomlWt::opinionated.
-// Sub-settings live under [wt.opinionated_settings] mapped from [wt.opinionated.*] keys.
-// We handle this by trying to parse the file with a flexible approach.
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -130,7 +107,7 @@ pub fn load() -> Config {
                 if let Some(v) = wt.basedir {
                     cfg.basedir = Some(v);
                 }
-                if let Some(op) = wt.opinionated_settings {
+                if let Some(op) = wt.settings {
                     apply_opinionated_settings(&mut cfg, &op);
                 }
                 if let Some(hook) = wt.hook {
@@ -290,10 +267,7 @@ mod tests {
     fn resolve_basedir_none_uses_parent() {
         let cfg = Config::default();
         let main_wt = Path::new("/home/user/project");
-        assert_eq!(
-            resolve_basedir(&cfg, main_wt),
-            PathBuf::from("/home/user")
-        );
+        assert_eq!(resolve_basedir(&cfg, main_wt), PathBuf::from("/home/user"));
     }
 
     #[test]
@@ -303,6 +277,10 @@ mod tests {
 opinionated = true
 basedir = ".worktrees"
 
+[wt.settings]
+mainGuard = true
+staleWarning = true
+
 [wt.hook]
 post-plant = "npm install"
 post-enter = "nvm use"
@@ -311,6 +289,9 @@ post-enter = "nvm use"
         let wt = parsed.wt.unwrap();
         assert_eq!(wt.opinionated, Some(true));
         assert_eq!(wt.basedir.as_deref(), Some(".worktrees"));
+        let settings = wt.settings.unwrap();
+        assert_eq!(settings.main_guard, Some(true));
+        assert_eq!(settings.stale_warning, Some(true));
         let hook = wt.hook.unwrap();
         assert_eq!(hook.post_plant.as_deref(), Some("npm install"));
         assert_eq!(hook.post_enter.as_deref(), Some("nvm use"));
